@@ -12,6 +12,7 @@ import {
 import { loadConfiguration, storeConfigValue, getConfigValue, registerConfigChangeHandler } from "./utils/config";
 import { handleIncomingMessage } from "./messageHandler";
 import { DownloadProgress } from "./types";
+import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientIdRule } from "./utils/browser";
 
 // --- Main TrackError class for background.ts specific errors ---
 export class TrackError extends Error {
@@ -27,87 +28,20 @@ const manifest = getExtensionManifest();
 const RULE_ID_OAUTH = 1;
 const RULE_ID_CLIENT_ID = 2;
 
-async function updateAuthHeaderRule(oauthToken?: string | null) {
-  if (!(typeof chrome !== "undefined" && chrome.declarativeNetRequest)) {
-    logger.logDebug("Skipping DNR update for OAuth: Not a Chrome MV3+ env or DNR unavailable.");
-    return;
-  }
-  const rulesToAdd: chrome.declarativeNetRequest.Rule[] = [];
-  const rulesToRemove: number[] = [RULE_ID_OAUTH];
-
-  if (oauthToken) {
-    rulesToAdd.push({
-      id: RULE_ID_OAUTH,
-      priority: 1,
-      action: {
-        type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-        requestHeaders: [
-          { header: "authorization", operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: `OAuth ${oauthToken}` }
-        ]
-      },
-      condition: {
-        urlFilter: "*://api-v2.soundcloud.com/*",
-        resourceTypes: [
-          chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
-        ]
-      }
-    });
-  }
-
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: rulesToRemove,
-      addRules: rulesToAdd
-    });
-    logger.logInfo(`OAuth DNR rule updated. Token: ${oauthToken ? "SET" : "REMOVED"}`);
-  } catch (error) {
-    logger.logError("Failed to update DNR rules for OAuth token:", error);
-  }
+/**
+ * Updates the declarativeNetRequest rule for adding the OAuth token header.
+ * If oauthToken is null or undefined, the rule is removed.
+ */
+async function updateAuthHeaderRule(oauthToken?: string | null): Promise<void> {
+  await setAuthHeaderRule(oauthToken);
 }
 
-async function updateClientIdRule(clientId?: string | null) {
-  if (!(typeof chrome !== "undefined" && chrome.declarativeNetRequest)) {
-    logger.logDebug("Skipping DNR update for ClientID: Not a Chrome MV3+ env or DNR unavailable.");
-    return;
-  }
-  const rulesToAdd: chrome.declarativeNetRequest.Rule[] = [];
-  const rulesToRemove: number[] = [RULE_ID_CLIENT_ID];
-
-  if (clientId) {
-    rulesToAdd.push({
-      id: RULE_ID_CLIENT_ID,
-      priority: 2,
-      action: {
-        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
-        redirect: {
-          transform: {
-            queryTransform: {
-              addOrReplaceParams: [{ key: "client_id", value: clientId }]
-            }
-          }
-        }
-      },
-      condition: {
-        urlFilter: "*://api-v2.soundcloud.com/*",
-        excludedRequestDomains: [],
-        resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST]
-      }
-    });
-    rulesToAdd[0].condition = {
-      urlFilter: "*://api-v2.soundcloud.com/*",
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST]
-    };
-  }
-
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: rulesToRemove,
-      addRules: rulesToAdd
-    });
-    logger.logInfo(`Client_id DNR rule updated. ClientID: ${clientId ? "SET" : "REMOVED"}`);
-  } catch (error) {
-    logger.logError("Failed to update DNR rules for client_id:", error);
-  }
+/**
+ * Updates the declarativeNetRequest rule for redirecting with the client_id parameter.
+ * If clientId is null or undefined, the rule is removed.
+ */
+async function updateClientIdRule(clientId?: string | null): Promise<void> {
+  await setClientIdRule(clientId);
 }
 
 logger.logInfo("Starting with version: " + manifest.version);
@@ -217,7 +151,7 @@ const followerIdRegex = new RegExp("/me/followings/(\\d+)");
 // Restore onBeforeSendHeaders for Firefox & non-DNR environments
 onBeforeSendHeaders(
   (details: chrome.webRequest.WebRequestHeadersDetails) => {
-    if (typeof chrome !== "undefined" && chrome.declarativeNetRequest) {
+    if (usesDeclarativeNetRequestForModification()) {
       const oauthTokenFromStorage = getConfigValue("oauth-token") as string | null;
       if (details.requestHeaders) {
         for (let i = 0; i < details.requestHeaders.length; i++) {
@@ -300,7 +234,7 @@ onBeforeRequest(
           storeConfigValue("client-id", clientIdFromUrl);
         }
       } else {
-        if (typeof browser !== "undefined" && !(typeof chrome !== "undefined" && chrome.declarativeNetRequest)) {
+        if (!usesDeclarativeNetRequestForModification()) {
           const storedClientId = getConfigValue("client-id") as string | null;
           if (storedClientId) {
             logger.logDebug(`Adding ClientId to ${details.url} via redirect (Firefox/non-DNR)`);

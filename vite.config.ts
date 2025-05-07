@@ -28,7 +28,6 @@ export default defineConfig({
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js", dest: "ffmpeg-core" },
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm", dest: "ffmpeg-core" },
                 // { src: 'node_modules/@ffmpeg/core-mt/dist/esm/ffmpeg-core.worker.js', dest: 'ffmpeg-core' }, // Uncomment if using multi-threaded version
-                { src: "src/content-loader.js", dest: "js" },
                 // Copy the correct manifest file based on the browser
                 {
                     src: `src/manifests/manifest_${browser === "firefox" ? "build" : "chrome"}.json`,
@@ -70,7 +69,7 @@ export default defineConfig({
                 "js/background.js": path.resolve(__dirname, "src/background.ts"),
                 "js/settings.js": path.resolve(__dirname, "src/settings.ts"),     // Added settings script
                 "js/content.js": path.resolve(__dirname, "src/content.ts"),
-                "js/content_loader.js": path.resolve(__dirname, "src/content_loader.js"), // Added content loader script
+                // "js/content_loader.js": path.resolve(__dirname, "src/content_loader.js"), // Removed from Vite build input, now handled by static copy
                 "js/repostBlocker.js": path.resolve(__dirname, "src/repostBlocker.ts")
             },
             output: {

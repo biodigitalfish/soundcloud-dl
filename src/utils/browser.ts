@@ -43,6 +43,124 @@ export function isServiceWorkerContext(): boolean {
 }
 
 /**
+ * Detects if the current environment (specifically Chrome MV3+) primarily uses
+ * declarativeNetRequest for network modifications like adding headers or redirecting.
+ */
+export function usesDeclarativeNetRequestForModification(): boolean {
+    // This assumes that if declarativeNetRequest is available and it's MV3,
+    // we intend to use it for modifications handled by the background script.
+    return typeof chrome !== "undefined" && chrome.declarativeNetRequest && isManifestV3();
+}
+
+// Define rule IDs consistently (can also be imported if defined elsewhere)
+const RULE_ID_OAUTH = 1;
+const RULE_ID_CLIENT_ID = 2;
+
+/**
+ * Sets or removes the OAuth header declarativeNetRequest rule if DNR is used for modification.
+ * @param oauthToken The OAuth token to set, or null/undefined to remove the rule.
+ */
+export async function setAuthHeaderRule(oauthToken?: string | null): Promise<void> {
+    if (!usesDeclarativeNetRequestForModification()) {
+        logger.logDebug("Skipping declarativeNetRequest OAuth rule update: DNR not used for modification in this environment.");
+        return;
+    }
+
+    const rulesToAdd: chrome.declarativeNetRequest.Rule[] = [];
+    const rulesToRemove: number[] = [RULE_ID_OAUTH];
+
+    if (oauthToken) {
+        rulesToAdd.push({
+            id: RULE_ID_OAUTH,
+            priority: 1,
+            action: {
+                type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+                requestHeaders: [
+                    { header: "authorization", operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: `OAuth ${oauthToken}` }
+                ]
+            },
+            condition: {
+                urlFilter: "*://api-v2.soundcloud.com/*",
+                resourceTypes: [
+                    chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+                ]
+            }
+        });
+    }
+
+    try {
+        // Ensure chrome.declarativeNetRequest is defined before calling updateDynamicRules
+        if (typeof chrome !== "undefined" && chrome.declarativeNetRequest) {
+            await chrome.declarativeNetRequest.updateDynamicRules({
+                removeRuleIds: rulesToRemove,
+                addRules: rulesToAdd
+            });
+            logger.logInfo(`OAuth DNR rule updated. Token: ${oauthToken ? "SET" : "REMOVED"}`);
+        } else {
+            logger.logError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
+        }
+    } catch (error) {
+        logger.logError("Failed to update DNR rules for OAuth token:", error);
+    }
+}
+
+/**
+ * Sets or removes the Client ID declarativeNetRequest rule if DNR is used for modification.
+ * @param clientId The Client ID to set, or null/undefined to remove the rule.
+ */
+export async function setClientIdRule(clientId?: string | null): Promise<void> {
+    if (!usesDeclarativeNetRequestForModification()) {
+        logger.logDebug("Skipping declarativeNetRequest ClientID rule update: DNR not used for modification in this environment.");
+        return;
+    }
+
+    const rulesToAdd: chrome.declarativeNetRequest.Rule[] = [];
+    const rulesToRemove: number[] = [RULE_ID_CLIENT_ID];
+
+    if (clientId) {
+        rulesToAdd.push({
+            id: RULE_ID_CLIENT_ID,
+            priority: 2,
+            action: {
+                type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+                redirect: {
+                    transform: {
+                        queryTransform: {
+                            addOrReplaceParams: [{ key: "client_id", value: clientId }]
+                        }
+                    }
+                }
+            },
+            condition: {
+                urlFilter: "*://api-v2.soundcloud.com/*",
+                excludedRequestDomains: [], // Potentially limit to soundcloud.com if needed
+                resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST]
+            }
+        });
+        // Ensure condition is set correctly based on your logic in background.ts
+        rulesToAdd[0].condition = {
+            urlFilter: "*://api-v2.soundcloud.com/*",
+            resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST]
+        };
+    }
+
+    try {
+        // Ensure chrome.declarativeNetRequest is defined before calling updateDynamicRules
+        if (typeof chrome !== "undefined" && chrome.declarativeNetRequest) {
+            await chrome.declarativeNetRequest.updateDynamicRules({
+                removeRuleIds: rulesToRemove,
+                addRules: rulesToAdd
+            });
+            logger.logInfo(`Client_id DNR rule updated. ClientID: ${clientId ? "SET" : "REMOVED"}`);
+        } else {
+            logger.logError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
+        }
+    } catch (error) {
+        logger.logError("Failed to update DNR rules for client_id:", error);
+    }
+}
+
+/**
  * Creates a URL from a Blob with fallbacks for service workers
  * @param blob The blob to create a URL for
  * @returns A URL string (object URL or data URL)
@@ -88,4 +206,51 @@ export function revokeURL(url: string): void {
         }
     }
     // Data URLs don't need to be revoked
+}
+
+/**
+ * Attempts to erase download history entries matching a given filename regex.
+ * This functionality is primarily for Chrome. Other browsers might not support this via the extension API.
+ * @param filenameRegex The regex pattern to match against download filenames.
+ */
+export function eraseDownloadHistoryEntry(filenameRegex: string): void {
+    // Check if chrome.downloads.erase is available (Chrome MV3+ and potentially V2)
+    if (typeof chrome !== "undefined" && chrome.downloads && chrome.downloads.erase) {
+        const query: chrome.downloads.DownloadQuery = {
+            filenameRegex: filenameRegex,
+            state: "complete" // Only target completed downloads
+        };
+
+        chrome.downloads.erase(query, (erasedIds) => {
+            if (erasedIds && erasedIds.length > 0) {
+                logger.logInfo(`Force redownload: Removed ${erasedIds.length} matching entries from browser download history.`);
+            } else {
+                logger.logDebug("Force redownload: No matching entries found in browser download history to erase.");
+            }
+        });
+    } else {
+        logger.logDebug("Skipping browser download history erase: chrome.downloads.erase is not available.");
+    }
+}
+
+/**
+ * Determines if a given URL represents a SoundCloud set/playlist, potentially
+ * including browser-specific logic.
+ * @param url The URL of the SoundCloud page/resource.
+ * @param initialIsSet The initial determination of whether the URL is a set.
+ * @returns True if the URL is determined to be a set/playlist.
+ */
+export function determineIfUrlIsSet(url: string, initialIsSet: boolean): boolean {
+    let finalIsSet = initialIsSet;
+
+    // Firefox specific check found in content.ts (circa line 650)
+    // In some cases, the initial detection might miss sets in Firefox.
+    if (!finalIsSet && typeof browser !== "undefined" && url) {
+        if (url.includes("/sets/") || url.includes("/albums/")) {
+            logger.logDebug(`[BrowserUtils] Firefox detected, forcing isSet=true for URL: ${url}`);
+            finalIsSet = true;
+        }
+    }
+
+    return finalIsSet;
 } 

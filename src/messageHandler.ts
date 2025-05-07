@@ -13,6 +13,7 @@ import {
 } from "./types";
 import { loadConfigValue, storeConfigValue, getConfigValue } from "./utils/config";
 import { MetadataExtractor } from "./metadataExtractor";
+import { eraseDownloadHistoryEntry } from "./utils/browser";
 
 // Message Type Constants
 export const DOWNLOAD_SET = "DOWNLOAD_SET";
@@ -221,38 +222,16 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
 
                 // 4. NEW STEP: Attempt to delete or erase matching entries from browser download history
                 try {
-                    if (typeof chrome !== "undefined" && chrome.downloads && chrome.downloads.erase) {
-                        // First, prepare the normalized track title/artist for matching
-                        const extractor = new MetadataExtractor(track.title, track.user.username, track.user.permalink);
-                        const normalizedTitle = extractor.getTitle();
-                        const artistList = extractor.getArtists();
-                        const normalizedArtist = artistList.map(a => a.name).join(", ");
-
-                        // Build a filename pattern that should match this track
-                        const filenamePattern = `${normalizedArtist} - ${normalizedTitle}`;
-                        const escapedPattern = filenamePattern.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
-                        const regexPattern = escapedPattern + "\\..+$";
-
-                        logger.logInfo(`Force redownload: Searching for downloads matching pattern: ${regexPattern}`);
-
-                        // Search for matching downloads
-                        const query: chrome.downloads.DownloadQuery = {
-                            filenameRegex: regexPattern,
-                            state: "complete"
-                        };
-
-                        // Erase matching downloads from history
-                        chrome.downloads.erase(query, (erasedIds) => {
-                            if (erasedIds && erasedIds.length > 0) {
-                                logger.logInfo(`Force redownload: Removed ${erasedIds.length} matching entries from browser download history.`);
-                            } else {
-                                logger.logInfo("Force redownload: No matching entries found in browser download history.");
-                            }
-                        });
-                    }
-                } catch (eraseError) {
-                    logger.logWarn("Failed to clear browser download history entries:", eraseError);
-                    // Continue with download even if this step fails
+                    const extractor = new MetadataExtractor(track.title, track.user.username, track.user.permalink);
+                    const normalizedTitle = extractor.getTitle();
+                    const artistList = extractor.getArtists();
+                    const normalizedArtist = artistList.map(a => a.name).join(", ");
+                    const filenamePattern = `${normalizedArtist} - ${normalizedTitle}`;
+                    const escapedPattern = filenamePattern.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
+                    const regexPattern = escapedPattern + "\\..+$";
+                    eraseDownloadHistoryEntry(regexPattern);
+                } catch (error) {
+                    logger.logError("Force redownload: Failed to erase matching entries from browser download history:", error);
                 }
             }
 

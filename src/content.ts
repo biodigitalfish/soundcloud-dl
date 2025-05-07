@@ -2,6 +2,7 @@ import { DomObserver, ObserverEvent } from "./utils/domObserver";
 // import { Logger } from "./utils/logger"; // Comment out custom logger for now
 import { sendMessageToBackend, onMessage, getPathFromExtensionFile } from "./compatibilityStubs";
 import { registerConfigChangeHandler, loadConfiguration, setOnConfigValueChanged, configKeys } from "./utils/config";
+import { determineIfUrlIsSet } from "./utils/browser";
 
 // --- CSS for Range Modal ---
 const modalCss = `
@@ -641,17 +642,8 @@ const addDownloadButtonToParent = (parent: Node & ParentNode, onClicked: OnButto
     browserType: typeof browser !== "undefined" ? "Firefox" : "Chrome"
   });
 
-  // Force isSet true for Firefox if URL contains /sets/ or /albums/
-  if (!isSet && typeof browser !== "undefined" && (onClicked as any).url) {
-    const url = (onClicked as any).url as string;
-    if (url.includes("/sets/") || url.includes("/albums/")) {
-      console.info("Firefox detected, forcing isSet=true for URL:", url);
-      (onClicked as any).isSet = true;
-    }
-  }
-
-  // Re-check after potential Firefox fix
-  const finalIsSet = (onClicked as any).isSet;
+  // Determine the final isSet value using the abstracted utility function
+  const finalIsSet = determineIfUrlIsSet(downloadUrl, isSet);
 
   if (finalIsSet) {
     // ... (range button logic remains the same, but ensure it uses the main button's state for updates)

@@ -1,6 +1,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL } from "@ffmpeg/util";
 import { Logger, LogLevel } from "./utils/logger"; // Assuming logger is in utils
+import { getPathFromExtensionFile } from "./compatibilityStubs";
 
 const logger = Logger.create("FFmpegSetup", LogLevel.Debug); // Or adjust logger name/level
 
@@ -24,11 +25,12 @@ export async function loadFFmpeg(): Promise<boolean> {
     ffmpegLoadPromise = (async () => {
         try {
             const corePathSuffix = "ffmpeg-core/";
-            const getURL = (typeof browser !== "undefined" && browser.runtime && browser.runtime.getURL)
-                ? browser.runtime.getURL
-                : chrome.runtime.getURL;
+            const coreBaseURL = getPathFromExtensionFile(corePathSuffix);
+            if (!coreBaseURL) {
+                logger.logError("[FFMPEG_WASM] Failed to get base URL for FFmpeg core files.");
+                return false;
+            }
 
-            const coreBaseURL = getURL(corePathSuffix);
             const coreJsPath = coreBaseURL + "ffmpeg-core.js";
             const coreWasmPath = coreBaseURL + "ffmpeg-core.wasm";
 
