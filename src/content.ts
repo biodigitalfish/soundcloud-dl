@@ -762,7 +762,7 @@ const addDownloadButtonToParent = (parent: Node & ParentNode, onClicked: OnButto
               logger.logWarn(`Range download completion safety timeout triggered for ID ${mainButtonId}. Download seems stuck for ${timeSinceLastProgress / 1000}s`);
 
               // For range downloads, after 10 minutes, assume it might have completed silently
-              if (timeSinceLastProgress > 600000) { // 10 minutes
+              if (timeSinceLastProgress > 1800000) { // 30 minutes
                 logger.logInfo(`Assuming potential silent completion for range download ${mainButtonId}`);
                 resetButtonBackground(buttonData.elem);
                 buttonData.elem.style.backgroundColor = "#19a352";
@@ -778,7 +778,7 @@ const addDownloadButtonToParent = (parent: Node & ParentNode, onClicked: OnButto
               }
             }
           }
-        }, 600000); // 10 minutes timeout for range downloads
+        }, 1800000); // 30 minutes timeout for range downloads
 
         // Log the message we're about to send
         logger.logInfo("Sending range download message:", {
