@@ -72,48 +72,67 @@ export class SoundCloudApi {
     this.logger = Logger.create("SoundCloudApi");
   }
 
+  // --- Retry with backoff utility ---
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    retries: number = 3,
+    initialDelayMs: number = 2000, // 2 seconds
+    contextString?: string
+  ): Promise<T> {
+    let attempt = 0;
+    let delay = initialDelayMs;
+    while (attempt <= retries) {
+      try {
+        this.logger.logDebug(`[Retry] Attempt ${attempt + 1}/${retries + 1} for ${contextString || 'operation'}`);
+        return await fn();
+      } catch (error) {
+        if (error instanceof RateLimitError && attempt < retries) {
+          attempt++;
+          this.logger.logWarn(`[Retry] Rate limit hit for ${contextString || 'operation'}. Retrying in ${delay / 1000}s... (Attempt ${attempt + 1}/${retries + 1})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2; // Exponential backoff
+        } else {
+          this.logger.logError(`[Retry] Failed for ${contextString || 'operation'} after ${attempt + 1} attempts or non-retryable error:`, error);
+          throw error; // Re-throw non-RateLimitError or if retries exhausted
+        }
+      }
+    }
+    // Should not be reached if logic is correct, but as a fallback:
+    throw new Error(`[Retry] Exhausted retries for ${contextString || 'operation'} without success.`);
+  }
+  // --- End Retry with backoff utility ---
+
   resolveUrl<T>(url: string) {
     const reqUrl = `${this.baseUrl}/resolve?url=${url}`;
-
-    return this.fetchJson<T>(reqUrl);
+    return this.retryWithBackoff(() => this._fetchJsonInternal<T>(reqUrl), 3, 2000, `resolveUrl: ${url}`);
   }
 
   getCurrentUser() {
     const url = `${this.baseUrl}/me`;
-
-    return this.fetchJson<User>(url);
+    return this.retryWithBackoff(() => this._fetchJsonInternal<User>(url), 3, 2000, `getCurrentUser`);
   }
 
   async getFollowedArtistIds(userId: number): Promise<number[]> {
     const url = `${this.baseUrl}/users/${userId}/followings/ids`;
-
-    const data = await this.fetchJson<any>(url);
-
+    const data = await this.retryWithBackoff(() => this._fetchJsonInternal<any>(url), 3, 2000, `getFollowedArtistIds: ${userId}`);
     if (!data || !data.collection) return null;
-
     return data.collection;
   }
 
   async getTracks(trackIds: number[]): Promise<KeyedTracks> {
     const url = `${this.baseUrl}/tracks?ids=${trackIds.join(",")}`;
-
     this.logger.logInfo("Fetching tracks with Ids", { trackIds });
-
-    const tracks = await this.fetchJson<Track>(url);
-
+    const tracks = await this.retryWithBackoff(() => this._fetchJsonInternal<Track[]>(url), 3, 2000, `getTracks: ${trackIds.length} IDs`);
     return trackIds.reduce((acc, cur, index) => {
       acc[cur] = tracks[index];
-
       return acc;
     }, {});
   }
 
   async getStreamDetails(url: string): Promise<StreamDetails> {
-    const stream = await this.fetchJson<Stream>(url);
-
+    const stream = await this.retryWithBackoff(() => this._fetchJsonInternal<Stream>(url), 3, 2000, `getStreamDetails: ${url}`);
     if (!stream || !stream.url) {
       this.logger.logError("Invalid stream response", stream);
-
       return null;
     }
 
@@ -140,32 +159,31 @@ export class SoundCloudApi {
   async getOriginalDownloadUrl(id: number): Promise<string | null> {
     const url = `${this.baseUrl}/tracks/${id}/download`;
     this.logger.logInfo("Getting original download URL for track with Id", id);
-
     try {
-      const downloadObj = await this.fetchJson<OriginalDownload>(url);
+      const downloadObj = await this.retryWithBackoff(() => this._fetchJsonInternal<OriginalDownload>(url), 3, 2000, `getOriginalDownloadUrl: ${id}`);
       if (!downloadObj || !downloadObj.redirectUri) {
         this.logger.logError("Invalid original file response", downloadObj);
         return null;
       }
       return downloadObj.redirectUri;
     } catch (_error) {
-      this.logger.logError(`Failed to get original download URL for track ${id}`, _error);
+      this.logger.logError(`Failed to get original download URL for track ${id} after retries`, _error);
       return null;
     }
   }
 
   async downloadArtwork(artworkUrl: string) {
-    const [buffer] = await this.fetchArrayBuffer(artworkUrl);
+    const [buffer] = await this.retryWithBackoff(() => this._fetchArrayBufferInternal(artworkUrl), 3, 2000, `downloadArtwork: ${artworkUrl}`);
     return buffer;
   }
 
   downloadStream(streamUrl: string, reportProgress: ProgressReport) {
-    return this.fetchArrayBuffer(streamUrl, reportProgress);
+    return this.retryWithBackoff(() => this._fetchArrayBufferInternal(streamUrl, reportProgress), 3, 1000, `downloadStream: ${streamUrl}`);
   }
 
-  private async fetchArrayBuffer(url: string, reportProgress?: ProgressReport): Promise<[ArrayBuffer | null, Headers | null]> {
+  private async _fetchArrayBufferInternal(url: string, reportProgress?: ProgressReport): Promise<[ArrayBuffer | null, Headers | null]> {
     try {
-      const response = await fetch(url); // Always use fetch
+      const response = await fetch(url);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -197,7 +215,6 @@ export class SoundCloudApi {
       if (reportProgress && total > 0) {
         reportProgress(0); // Initial progress
       }
-
 
       while (true) {
         const { done, value } = await reader.read();
@@ -233,7 +250,6 @@ export class SoundCloudApi {
       }
 
       return [completeBuffer, response.headers];
-
     } catch (error) {
       this.logger.logError(`[fetchArrayBuffer] Generic error for ${url}:`, error);
       // To keep original behavior of throwing specific RateLimitError or generic Error:
@@ -245,7 +261,7 @@ export class SoundCloudApi {
     }
   }
 
-  private async fetchJson<T>(url: string) {
+  private async _fetchJsonInternal<T>(url: string) {
     try {
       const resp = await fetch(url);
 
