@@ -32,7 +32,13 @@ function isTranscodingDetails(detail: unknown): detail is TranscodingDetails {
 }
 
 function getTranscodingDetails(details: Track): TranscodingDetails[] | null {
-    if (details?.media?.transcodings?.length < 1) return null;
+    if (details?.media?.transcodings?.length < 1) {
+        logger.logDebug(`[DownloadHandler TrackId: ${details.id}] No transcodings array or empty in track.media.`);
+        return null;
+    }
+    // Log the raw transcodings for debugging
+    logger.logDebug(`[DownloadHandler TrackId: ${details.id}] Raw transcodings:`, JSON.stringify(details.media.transcodings, null, 2));
+
     const mpegStreams = details.media.transcodings
         .filter(
             (transcoding) =>
@@ -417,6 +423,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                 throw new TrackError("Stream buffer is undefined after download attempts", data.trackId);
             }
             originalStreamBuffer = streamBuffer.slice(0);
+            logger.logDebug(`[DownloadHandler TrackId: ${data.trackId}] Initial streamBuffer byteLength: ${streamBuffer?.byteLength}, originalStreamBuffer byteLength: ${originalStreamBuffer?.byteLength}`);
 
             if (!data.fileExtension && streamHeaders) {
                 determinedContentType = streamHeaders.get("content-type");
@@ -442,7 +449,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                 };
 
                 try {
-                    logger.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager.`);
+                    logger.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager. Original streamBuffer byteLength before remux: ${originalStreamBuffer?.byteLength}`);
                     // Use originalStreamBuffer, which should be the complete downloaded (possibly HLS-concatenated) buffer
                     const remuxedBuffer = await requestRemux(
                         data.trackId.toString(), // Ensure taskId is a string for the manager
@@ -458,6 +465,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     logger.logError(`[FFMPEG_MANAGER] Error during remux via manager. Proceeding with original. TrackId: ${data.trackId}`, ffmpegError);
                     // Fallback to originalStreamBuffer if remuxing fails
                     streamBuffer = originalStreamBuffer.slice(0); // Use a copy for safety
+                    logger.logDebug(`[DownloadHandler TrackId: ${data.trackId}] FFmpeg failed. Fallen back to originalStreamBuffer. ByteLength: ${streamBuffer?.byteLength}`);
                     // reportProgress still at 85 or whatever it was before failure if ffmpegError is caught
                 }
             } else {
@@ -534,6 +542,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     originalStreamBuffer?.byteLength > 0 ? originalStreamBuffer.slice(0) :
                         (() => { throw new TrackError(`All buffers invalid for ${data.trackId}`, data.trackId); })();
             if (bufferToSave.byteLength < 100) logger.logWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
+            logger.logDebug(`[DownloadHandler TrackId: ${data.trackId}] Final bufferToSave byteLength before Blob creation: ${bufferToSave?.byteLength}`);
 
             const blobOptions: BlobPropertyBag = {};
             if (determinedContentType) blobOptions.type = determinedContentType;

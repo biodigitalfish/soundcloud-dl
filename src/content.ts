@@ -345,11 +345,24 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
   }
   const buttonData = downloadButtons[finalDownloadId!];
   if (!buttonData) {
-    const currentKeysForWarning = Object.keys(downloadButtons);
-    let payloadStringForWarning = "<payload_serialization_error_in_warning>";
-    try { payloadStringForWarning = JSON.stringify(messagePayload); } catch { /* ignore */ }
-    logger.logWarn(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}. Message: ${payloadStringForWarning}. All downloadButton keys at this point: ${currentKeysForWarning.join(",") || "none"}`);
-    return Promise.resolve({ handled: false, reason: "Button data not found for finalDownloadId" });
+    // Check if this is a late finalization message for an already cleaned-up button
+    const isErrorObject = typeof messagePayload.error === "object" && messagePayload.error !== null;
+    const isErrorString = typeof messagePayload.error === "string" && messagePayload.error !== "";
+    const isLateFinalization = (messagePayload.progress !== undefined && messagePayload.progress >= 101 && messagePayload.progress <= 102) ||
+      messagePayload.completed === true ||
+      isErrorObject || isErrorString;
+
+    if (isLateFinalization) {
+      logger.logInfo(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}, but message is a late finalization. Likely already cleaned up. Message:`, JSON.parse(JSON.stringify(messagePayload)));
+      return Promise.resolve({ handled: true, reason: "Button data not found, late finalization message" });
+    } else {
+      // It's not a finalization message, so the warning is more relevant
+      const currentKeysForWarning = Object.keys(downloadButtons);
+      let payloadStringForWarning = "<payload_serialization_error_in_warning>";
+      try { payloadStringForWarning = JSON.stringify(messagePayload); } catch { /* ignore */ }
+      logger.logWarn(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}. Message: ${payloadStringForWarning}. All downloadButton keys at this point: ${currentKeysForWarning.join(",") || "none"}`);
+      return Promise.resolve({ handled: false, reason: "Button data not found for finalDownloadId" });
+    }
   }
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
   logger.logDebug(`[HANDLE_MSG_FROM_BG] Processing for finalDownloadId: ${finalDownloadId}. Current button state: ${currentState}. Message progress: ${progress}, success: ${messagePayload.success}`);

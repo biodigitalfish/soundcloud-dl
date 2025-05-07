@@ -75,13 +75,14 @@ async function _performRemux(instanceWrapper: FFmpegInstanceWrapper, task: Remux
     const { instance, id: instanceId } = instanceWrapper;
     const { taskId, inputBuffer, fileExtension, progressCallback, resolve, reject } = task;
 
-    const inputFilename = `input_${instanceId}.${fileExtension || "mp4"}`;
-    const outputFilename = `output_remuxed_${instanceId}.${fileExtension || "mp4"}`;
+    const inputFilename = `input_${taskId}_${instanceId}.${fileExtension || "mp4"}`;
+    const outputFilename = `output_remuxed_${taskId}_${instanceId}.${fileExtension || "mp4"}`;
     logger.logInfo(`[FFmpegManager] Instance ${instanceId} starting remux for task ${taskId}: ${inputFilename} -> ${outputFilename}`);
 
     let ffmpegProgressHandler: (({ progress }: { progress: number; }) => void) | undefined;
 
     try {
+        logger.logDebug(`[FFmpegManager] Instance ${instanceId}, Task ${taskId}: Input buffer byteLength: ${inputBuffer?.byteLength}`);
         // Ensure a fresh copy for each operation within this instance
         await instance.writeFile(inputFilename, new Uint8Array(inputBuffer.slice(0)));
 

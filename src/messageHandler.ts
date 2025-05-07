@@ -53,13 +53,12 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
     }
     logger.logDebug("[MessageHandler DEBUG] Received message:", receivedMessageForLog);
 
-    if (!message || message.downloadId === undefined && message.type !== undefined) {
+    if (!message || (message.downloadId === undefined && message.type !== undefined && message.type !== "GET_EXTENSION_CONFIG")) {
         logger.logError(
-            "CRITICAL: MessageHandler received message with undefined or missing downloadId!",
+            "CRITICAL: MessageHandler received message with undefined or missing downloadId for a relevant type!",
             receivedMessageForLog
         );
         // Depending on how you want to handle this, you might return or throw.
-        // For now, let it proceed to see if `type` is present for other logic, but this is bad.
     }
     // --- End critical logging ---
 

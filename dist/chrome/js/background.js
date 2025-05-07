@@ -637,11 +637,12 @@ async function initializePool() {
 async function _performRemux(instanceWrapper, task) {
   const { instance, id: instanceId } = instanceWrapper;
   const { taskId, inputBuffer, fileExtension, progressCallback, resolve, reject } = task;
-  const inputFilename = `input_${instanceId}.${fileExtension || "mp4"}`;
-  const outputFilename = `output_remuxed_${instanceId}.${fileExtension || "mp4"}`;
+  const inputFilename = `input_${taskId}_${instanceId}.${fileExtension || "mp4"}`;
+  const outputFilename = `output_remuxed_${taskId}_${instanceId}.${fileExtension || "mp4"}`;
   logger$4.logInfo(`[FFmpegManager] Instance ${instanceId} starting remux for task ${taskId}: ${inputFilename} -> ${outputFilename}`);
   let ffmpegProgressHandler;
   try {
+    logger$4.logDebug(`[FFmpegManager] Instance ${instanceId}, Task ${taskId}: Input buffer byteLength: ${inputBuffer?.byteLength}`);
     await instance.writeFile(inputFilename, new Uint8Array(inputBuffer.slice(0)));
     const ffmpegArgs = ["-loglevel", "debug", "-i", inputFilename, "-c", "copy", outputFilename];
     if (progressCallback) {
@@ -3346,7 +3347,11 @@ function isTranscodingDetails(detail) {
   return typeof detail === "object" && detail !== null && "protocol" in detail;
 }
 function getTranscodingDetails(details) {
-  if (details?.media?.transcodings?.length < 1) return null;
+  if (details?.media?.transcodings?.length < 1) {
+    logger$3.logDebug(`[DownloadHandler TrackId: ${details.id}] No transcodings array or empty in track.media.`);
+    return null;
+  }
+  logger$3.logDebug(`[DownloadHandler TrackId: ${details.id}] Raw transcodings:`, JSON.stringify(details.media.transcodings, null, 2));
   const mpegStreams = details.media.transcodings.filter(
     (transcoding) => (transcoding.format?.protocol === "progressive" || transcoding.format?.protocol === "hls") && (transcoding.format?.mime_type?.startsWith("audio/mpeg") || transcoding.format?.mime_type?.startsWith("audio/mp4")) && !transcoding.snipped
   ).map((transcoding) => ({
@@ -3661,6 +3666,7 @@ async function handleDownload(data, reportProgress) {
         throw new TrackError("Stream buffer is undefined after download attempts", data.trackId);
       }
       originalStreamBuffer = streamBuffer.slice(0);
+      logger$3.logDebug(`[DownloadHandler TrackId: ${data.trackId}] Initial streamBuffer byteLength: ${streamBuffer?.byteLength}, originalStreamBuffer byteLength: ${originalStreamBuffer?.byteLength}`);
       if (!data.fileExtension && streamHeaders) {
         determinedContentType = streamHeaders.get("content-type");
         let extension = "mp3";
@@ -3678,7 +3684,7 @@ async function handleDownload(data, reportProgress) {
           reportProgress(overallProgressUpdate);
         };
         try {
-          logger$3.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager.`);
+          logger$3.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager. Original streamBuffer byteLength before remux: ${originalStreamBuffer?.byteLength}`);
           const remuxedBuffer = await requestRemux(
             data.trackId.toString(),
             // Ensure taskId is a string for the manager
@@ -3694,6 +3700,7 @@ async function handleDownload(data, reportProgress) {
         } catch (ffmpegError) {
           logger$3.logError(`[FFMPEG_MANAGER] Error during remux via manager. Proceeding with original. TrackId: ${data.trackId}`, ffmpegError);
           streamBuffer = originalStreamBuffer.slice(0);
+          logger$3.logDebug(`[DownloadHandler TrackId: ${data.trackId}] FFmpeg failed. Fallen back to originalStreamBuffer. ByteLength: ${streamBuffer?.byteLength}`);
         }
       } else {
         logger$3.logDebug(`[DownloadHandler TrackId: ${data.trackId}] FFmpeg remux skipped (disabled or not applicable filetype).`);
@@ -3756,6 +3763,7 @@ async function handleDownload(data, reportProgress) {
         throw new TrackError(`All buffers invalid for ${data.trackId}`, data.trackId);
       })();
       if (bufferToSave.byteLength < 100) logger$3.logWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
+      logger$3.logDebug(`[DownloadHandler TrackId: ${data.trackId}] Final bufferToSave byteLength before Blob creation: ${bufferToSave?.byteLength}`);
       const blobOptions = {};
       if (determinedContentType) blobOptions.type = determinedContentType;
       else if (data.fileExtension === "mp3") blobOptions.type = "audio/mpeg";
@@ -3882,9 +3890,9 @@ async function handleIncomingMessage(message, sender) {
     receivedMessageForLog = { errorParsingMessage: true, rawMessage: String(message) };
   }
   logger$1.logDebug("[MessageHandler DEBUG] Received message:", receivedMessageForLog);
-  if (!message || message.downloadId === void 0 && message.type !== void 0) {
+  if (!message || message.downloadId === void 0 && message.type !== void 0 && message.type !== "GET_EXTENSION_CONFIG") {
     logger$1.logError(
-      "CRITICAL: MessageHandler received message with undefined or missing downloadId!",
+      "CRITICAL: MessageHandler received message with undefined or missing downloadId for a relevant type!",
       receivedMessageForLog
     );
   }
