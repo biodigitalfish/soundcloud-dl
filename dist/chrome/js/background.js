@@ -9,34 +9,79 @@ class RateLimitError extends Error {
 class SoundCloudApi {
   baseUrl = "https://api-v2.soundcloud.com";
   logger;
+  globalBackoffUntil = null;
+  globalBackoffDurationMs = 61 * 1e3;
+  // 60 seconds
   constructor() {
     this.logger = Logger.create("SoundCloudApi");
   }
+  // --- Retry with backoff utility ---
+  async retryWithBackoff(fn, retries = 3, initialDelayMs = 2e3, contextString) {
+    if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
+      const waitTime = this.globalBackoffUntil - Date.now();
+      this.logger.logWarn(`[Global Backoff] Active. Waiting for ${waitTime / 1e3}s before proceeding with ${contextString || "operation"}.`);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+    let attempt = 0;
+    let delay = initialDelayMs;
+    while (attempt <= retries) {
+      try {
+        if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
+          const waitTime = this.globalBackoffUntil - Date.now();
+          this.logger.logWarn(`[Global Backoff] Active during retry attempt. Waiting for ${waitTime / 1e3}s for ${contextString || "operation"}.`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        }
+        this.logger.logDebug(`[Retry] Attempt ${attempt + 1}/${retries + 1} for ${contextString || "operation"}`);
+        return await fn();
+      } catch (error) {
+        if (error instanceof RateLimitError) {
+          if (attempt < retries) {
+            attempt++;
+            this.logger.logWarn(`[Retry] Rate limit hit for ${contextString || "operation"}. Retrying in ${delay / 1e3}s... (Attempt ${attempt + 1}/${retries + 1})`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            delay *= 2;
+          } else {
+            this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts due to rate limit. Activating global backoff.`);
+            this.globalBackoffUntil = Date.now() + this.globalBackoffDurationMs;
+            this.logger.logWarn(`[Global Backoff] Activated for ${this.globalBackoffDurationMs / 1e3}s due to persistent rate limiting on ${contextString || "operation"}.`);
+            throw error;
+          }
+        } else {
+          this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts or non-retryable error:`, error);
+          throw error;
+        }
+      }
+    }
+    const finalErrorMsg = `[Retry] Exhausted retries for ${contextString || "operation"} without success (this path should not be reached).`;
+    this.logger.logError(finalErrorMsg);
+    throw new Error(finalErrorMsg);
+  }
+  // --- End Retry with backoff utility ---
   resolveUrl(url) {
     const reqUrl = `${this.baseUrl}/resolve?url=${url}`;
-    return this.fetchJson(reqUrl);
+    return this.retryWithBackoff(() => this._fetchJsonInternal(reqUrl), 3, 2e3, `resolveUrl: ${url}`);
   }
   getCurrentUser() {
     const url = `${this.baseUrl}/me`;
-    return this.fetchJson(url);
+    return this.retryWithBackoff(() => this._fetchJsonInternal(url), 3, 2e3, "getCurrentUser");
   }
   async getFollowedArtistIds(userId) {
     const url = `${this.baseUrl}/users/${userId}/followings/ids`;
-    const data = await this.fetchJson(url);
+    const data = await this.retryWithBackoff(() => this._fetchJsonInternal(url), 3, 2e3, `getFollowedArtistIds: ${userId}`);
     if (!data || !data.collection) return null;
     return data.collection;
   }
   async getTracks(trackIds) {
     const url = `${this.baseUrl}/tracks?ids=${trackIds.join(",")}`;
     this.logger.logInfo("Fetching tracks with Ids", { trackIds });
-    const tracks = await this.fetchJson(url);
+    const tracks = await this.retryWithBackoff(() => this._fetchJsonInternal(url), 3, 2e3, `getTracks: ${trackIds.length} IDs`);
     return trackIds.reduce((acc, cur, index) => {
       acc[cur] = tracks[index];
       return acc;
     }, {});
   }
   async getStreamDetails(url) {
-    const stream = await this.fetchJson(url);
+    const stream = await this.retryWithBackoff(() => this._fetchJsonInternal(url), 3, 2e3, `getStreamDetails: ${url}`);
     if (!stream || !stream.url) {
       this.logger.logError("Invalid stream response", stream);
       return null;
@@ -62,25 +107,25 @@ class SoundCloudApi {
     const url = `${this.baseUrl}/tracks/${id}/download`;
     this.logger.logInfo("Getting original download URL for track with Id", id);
     try {
-      const downloadObj = await this.fetchJson(url);
+      const downloadObj = await this.retryWithBackoff(() => this._fetchJsonInternal(url), 3, 2e3, `getOriginalDownloadUrl: ${id}`);
       if (!downloadObj || !downloadObj.redirectUri) {
         this.logger.logError("Invalid original file response", downloadObj);
         return null;
       }
       return downloadObj.redirectUri;
     } catch (_error) {
-      this.logger.logError(`Failed to get original download URL for track ${id}`, _error);
+      this.logger.logError(`Failed to get original download URL for track ${id} after retries`, _error);
       return null;
     }
   }
   async downloadArtwork(artworkUrl) {
-    const [buffer] = await this.fetchArrayBuffer(artworkUrl);
+    const [buffer] = await this.retryWithBackoff(() => this._fetchArrayBufferInternal(artworkUrl), 3, 2e3, `downloadArtwork: ${artworkUrl}`);
     return buffer;
   }
   downloadStream(streamUrl, reportProgress) {
-    return this.fetchArrayBuffer(streamUrl, reportProgress);
+    return this.retryWithBackoff(() => this._fetchArrayBufferInternal(streamUrl, reportProgress), 3, 1e3, `downloadStream: ${streamUrl}`);
   }
-  async fetchArrayBuffer(url, reportProgress) {
+  async _fetchArrayBufferInternal(url, reportProgress) {
     try {
       const response = await fetch(url);
       if (!response.ok) {
@@ -140,7 +185,7 @@ class SoundCloudApi {
       throw new Error(`Failed to fetch array buffer from ${url}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  async fetchJson(url) {
+  async _fetchJsonInternal(url) {
     try {
       const resp = await fetch(url);
       if (!resp.ok) {

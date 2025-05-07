@@ -67,6 +67,8 @@ type ProgressReport = (progress: number) => void;
 export class SoundCloudApi {
   readonly baseUrl: string = "https://api-v2.soundcloud.com";
   private logger: Logger;
+  private globalBackoffUntil: number | null = null;
+  private globalBackoffDurationMs: number = 61 * 1000; // 60 seconds
 
   constructor() {
     this.logger = Logger.create("SoundCloudApi");
@@ -75,30 +77,54 @@ export class SoundCloudApi {
   // --- Retry with backoff utility ---
   private async retryWithBackoff<T>(
     fn: () => Promise<T>,
-    retries: number = 3,
+    retries: number = 30,
     initialDelayMs: number = 2000, // 2 seconds
     contextString?: string
   ): Promise<T> {
+    // Check and wait for global backoff before starting any attempts
+    if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
+      const waitTime = this.globalBackoffUntil - Date.now();
+      this.logger.logWarn(`[Global Backoff] Active. Waiting for ${waitTime / 1000}s before proceeding with ${contextString || "operation"}.`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+
     let attempt = 0;
     let delay = initialDelayMs;
     while (attempt <= retries) {
       try {
-        this.logger.logDebug(`[Retry] Attempt ${attempt + 1}/${retries + 1} for ${contextString || 'operation'}`);
+        // Re-check global backoff before each attempt, in case it was set by another concurrent operation
+        if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
+          const waitTime = this.globalBackoffUntil - Date.now();
+          this.logger.logWarn(`[Global Backoff] Active during retry attempt. Waiting for ${waitTime / 1000}s for ${contextString || "operation"}.`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+
+        this.logger.logDebug(`[Retry] Attempt ${attempt + 1}/${retries + 1} for ${contextString || "operation"}`);
         return await fn();
       } catch (error) {
-        if (error instanceof RateLimitError && attempt < retries) {
-          attempt++;
-          this.logger.logWarn(`[Retry] Rate limit hit for ${contextString || 'operation'}. Retrying in ${delay / 1000}s... (Attempt ${attempt + 1}/${retries + 1})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          delay *= 2; // Exponential backoff
+        if (error instanceof RateLimitError) {
+          if (attempt < retries) {
+            attempt++;
+            this.logger.logWarn(`[Retry] Rate limit hit for ${contextString || "operation"}. Retrying in ${delay / 1000}s... (Attempt ${attempt + 1}/${retries + 1})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2; // Exponential backoff
+          } else {
+            // Local retries exhausted for a RateLimitError, activate global backoff
+            this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts due to rate limit. Activating global backoff.`);
+            this.globalBackoffUntil = Date.now() + this.globalBackoffDurationMs;
+            this.logger.logWarn(`[Global Backoff] Activated for ${this.globalBackoffDurationMs / 1000}s due to persistent rate limiting on ${contextString || "operation"}.`);
+            throw error; // Re-throw the RateLimitError
+          }
         } else {
-          this.logger.logError(`[Retry] Failed for ${contextString || 'operation'} after ${attempt + 1} attempts or non-retryable error:`, error);
+          this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts or non-retryable error:`, error);
           throw error; // Re-throw non-RateLimitError or if retries exhausted
         }
       }
     }
     // Should not be reached if logic is correct, but as a fallback:
-    throw new Error(`[Retry] Exhausted retries for ${contextString || 'operation'} without success.`);
+    const finalErrorMsg = `[Retry] Exhausted retries for ${contextString || "operation"} without success (this path should not be reached).`;
+    this.logger.logError(finalErrorMsg);
+    throw new Error(finalErrorMsg);
   }
   // --- End Retry with backoff utility ---
 
@@ -109,7 +135,7 @@ export class SoundCloudApi {
 
   getCurrentUser() {
     const url = `${this.baseUrl}/me`;
-    return this.retryWithBackoff(() => this._fetchJsonInternal<User>(url), 3, 2000, `getCurrentUser`);
+    return this.retryWithBackoff(() => this._fetchJsonInternal<User>(url), 3, 2000, "getCurrentUser");
   }
 
   async getFollowedArtistIds(userId: number): Promise<number[]> {

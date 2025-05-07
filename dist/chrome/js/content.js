@@ -419,7 +419,7 @@ const handleMessageFromBackgroundScript = (messagePayload, sender) => {
     downloadButton.title = error || "Some tracks failed to download";
     downloadButton.onclick = null;
     downloadButtons[finalDownloadId].state = "Downloaded";
-    downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
+    downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 3e4);
   } else if (status === "Paused") {
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Button state updated to Paused, finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);

@@ -408,7 +408,7 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Download complete with errors (102) for finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton); downloadButton.style.backgroundColor = "gold"; downloadButton.style.color = "#333";
     setButtonText(downloadButton, "Downloaded!"); downloadButton.title = error || "Some tracks failed to download"; downloadButton.onclick = null;
-    downloadButtons[finalDownloadId!].state = "Downloaded"; downloadButtons[finalDownloadId!].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId!), 10000);
+    downloadButtons[finalDownloadId!].state = "Downloaded"; downloadButtons[finalDownloadId!].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId!), 30000);
   } else if (status === "Paused") {
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Button state updated to Paused, finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton); setButtonText(downloadButton, "Paused (Click to Resume)");
