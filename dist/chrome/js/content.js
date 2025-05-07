@@ -461,12 +461,21 @@ const handleMessageFromBackgroundScript = (messagePayload, sender) => {
       downloadButtons[finalDownloadId].state = "Finishing";
     }
   } else if (progress !== void 0 && progress >= 0 && progress < 100) {
+    if (currentState === "Pausing" || currentState === "Paused") {
+      logger.logDebug(`[HANDLE_MSG_FROM_BG] Progress update (${progress}%) for ${finalDownloadId} received while state is '${currentState}'. Ignoring UI update to prevent flicker.`);
+      return Promise.resolve({ handled: true, id: finalDownloadId, reason: "Ignoring download progress while pausing/paused" });
+    }
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Button state updated to Downloading (${progress}%), finalDownloadId=${finalDownloadId}`);
     setButtonText(downloadButton, "Downloading... (Click to Pause)");
     downloadButton.style.background = `linear-gradient(90deg, #ff5419 ${progress}%, transparent 0%)`;
-    downloadButton.style.cursor = "pointer";
-    downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
+    if (currentState !== "Downloading" || !downloadButton.onclick) {
+      downloadButton.style.cursor = "pointer";
+      downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
+    }
     downloadButtons[finalDownloadId].state = "Downloading";
+    if (downloadButtons[finalDownloadId]) {
+      downloadButtons[finalDownloadId].lastProgressTime = Date.now();
+    }
   } else if (error) {
     logger.logWarn(`[HANDLE_MSG_FROM_BG] Button state updated to Error: ${error}, finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);
@@ -481,8 +490,6 @@ const handleMessageFromBackgroundScript = (messagePayload, sender) => {
     downloadButton.style.cursor = "pointer";
     downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
     downloadButtons[finalDownloadId].state = "Downloading";
-  } else {
-    logger.logWarn("[HANDLE_MSG_FROM_BG] Message passed all filters but did not match any specific state update logic. Payload:", JSON.parse(JSON.stringify(messagePayload)));
   }
   return Promise.resolve({ handled: true, id: finalDownloadId, finalState: downloadButtons[finalDownloadId]?.state });
 };
@@ -1038,14 +1045,25 @@ const createPauseResumeHandler = (downloadId) => {
       logger.logError("Attempted to send PAUSE/RESUME command with undefined/empty downloadId.");
       return;
     }
-    if (buttonData.state === "Downloading" || buttonData.state === "Resuming") {
+    const currentButtonState = buttonData.state;
+    if (currentButtonState === "Downloading" || currentButtonState === "Resuming") {
+      logger.logInfo(`[PAUSE_CLICK] User clicked Pause for ${downloadId}. Current state: ${currentButtonState}. Transitioning to Pausing.`);
       setButtonText(buttonData.elem, "Pausing...");
+      buttonData.elem.style.cursor = "default";
+      buttonData.elem.onclick = null;
       buttonData.state = "Pausing";
+      buttonData.lastProgressTime = Date.now();
       await loggedSendMessageToBackend({ type: "PAUSE_DOWNLOAD", downloadId }, "createPauseResumeHandler-Pause");
-    } else if (buttonData.state === "Paused") {
+    } else if (currentButtonState === "Paused") {
+      logger.logInfo(`[RESUME_CLICK] User clicked Resume for ${downloadId}. Current state: ${currentButtonState}. Transitioning to Resuming.`);
       setButtonText(buttonData.elem, "Resuming...");
+      buttonData.elem.style.cursor = "default";
+      buttonData.elem.onclick = null;
       buttonData.state = "Resuming";
+      buttonData.lastProgressTime = Date.now();
       await loggedSendMessageToBackend({ type: "RESUME_DOWNLOAD", downloadId }, "createPauseResumeHandler-Resume");
+    } else {
+      logger.logWarn(`[PAUSE_RESUME_CLICK] Clicked on button for ${downloadId} but state is '${currentButtonState}', not Downloading/Resuming or Paused. No action taken.`);
     }
   };
 };
