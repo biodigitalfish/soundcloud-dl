@@ -5,6 +5,7 @@ import {
     sendDownloadProgress,
     chunkArray,
 } from "./background";
+import { sendMessageToTab } from "./compatibilityStubs";
 import {
     DownloadRequest,
     DownloadSetRangeRequest,
@@ -62,11 +63,32 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
         return { error: "No valid tab ID found in message sender" }; // Return a JSON-serializable error object
     }
 
+    // --- IMMEDIATE TEST MESSAGE for DOWNLOAD type only to reduce noise --- 
+    if (type === DOWNLOAD && downloadId) { // Ensure downloadId is present for meaningful test
+        const testMessagePayload = {
+            scdl_test_message: "HELLO_FROM_MESSAGE_HANDLER_EARLY_ACK_TEST",
+            testForDownloadId: downloadId,
+            timestamp: Date.now()
+        };
+        logger.logDebug(`[MessageHandler TX TestMsg] Attempting to send TEST MESSAGE to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(testMessagePayload)));
+        sendMessageToTab(tabId, testMessagePayload)
+            .then(() => logger.logInfo(`[MessageHandler TX TestMsg] TEST MESSAGE for downloadId ${downloadId} successfully sent to tab ${tabId} (promise resolved).`))
+            .catch(e => logger.logError(`[MessageHandler TX TestMsg] TEST MESSAGE for downloadId ${downloadId} FAILED to send to tab ${tabId}:`, e));
+    }
+    // --- END IMMEDIATE TEST MESSAGE ---
+
     try {
         if (type === DOWNLOAD_SET) {
             logger.logDebug("Received set download request", { url, downloadId });
-            sendDownloadProgress(tabId, downloadId, 0);
-            delete pausedDownloads[downloadId];
+
+            const ackSetPayload = { success: true, originalDownloadId: downloadId, message: "Set download command received, preparing tracks." };
+            logger.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD_SET) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackSetPayload)));
+            sendMessageToTab(tabId, ackSetPayload)
+                .then(() => logger.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD_SET) for ${downloadId} sent to tab ${tabId}.`))
+                .catch(e => logger.logError("[MessageHandler TX Ack] DOWNLOAD_SET: Failed to send initial command ack to tab", e));
+
+            // delete pausedDownloads[downloadId]; // Keep this after the main processing starts or if it makes sense here
+            // sendDownloadProgress(tabId, downloadId, 0); // This might be redundant if the ack above is handled well
 
             const set = await soundcloudApi.resolveUrl<Playlist>(url);
             if (!set) {
@@ -139,10 +161,19 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                 logger.logInfo("Downloaded set successfully!");
                 sendDownloadProgress(tabId, downloadId, 101);
             }
-            return { success: true, message: "Playlist download completed" }; // Return a JSON-serializable success object
+            // Return a final confirmation, now distinct from the initial ack.
+            // The content script might not specifically wait for this if it tracks completion via progress messages.
+            return { success: true, message: "Playlist download processing initiated and final status sent via progress.", originalDownloadId: downloadId };
         } else if (type === DOWNLOAD) {
             logger.logDebug("Received track download request", { url, downloadId });
-            sendDownloadProgress(tabId, downloadId, 0);
+
+            const ackDownloadPayload = { success: true, originalDownloadId: downloadId, message: "Download command received, preparing track." };
+            logger.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackDownloadPayload)));
+            sendMessageToTab(tabId, ackDownloadPayload)
+                .then(() => logger.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD) for ${downloadId} sent to tab ${tabId}.`))
+                .catch(e => logger.logError("[MessageHandler TX Ack] DOWNLOAD: Failed to send initial command ack to tab", e));
+
+            // sendDownloadProgress(tabId, downloadId, 0); // May be redundant now
             delete pausedDownloads[downloadId];
 
             const track = await soundcloudApi.resolveUrl<Track>(url);
@@ -152,23 +183,10 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
 
             // Enhanced reportTrackProgress function that can include the browser's download ID
             let browserDlId: number | undefined;
-            const reportTrackProgress = (progress?: number) => {
-                if (browserDlId !== undefined) {
-                    // If we have the browser download ID, include it in the message
-                    sendDownloadProgress(tabId, downloadId, progress, undefined, undefined, browserDlId);
-                } else {
-                    // Otherwise just send the regular progress message
-                    sendDownloadProgress(tabId, downloadId, progress);
-
-                    // If we get a 101 completion code and we don't have a browser download ID yet,
-                    // the downloadTrack function must have finished but our browserDlId wasn't set.
-                    // Let's check if the last parameter is a number (the browser downloadId)
-                    if (progress === 101 && arguments.length > 1 && typeof arguments[1] === "number") {
-                        browserDlId = arguments[1];
-                        // Send an updated completion message with the browser ID
-                        sendDownloadProgress(tabId, downloadId, progress, undefined, undefined, browserDlId);
-                    }
-                }
+            const reportTrackProgress = (progress?: number, browserDlIdFromCallback?: number) => {
+                // Log exactly what this callback receives and passes on
+                logger.logDebug(`[MessageHandler] reportTrackProgress (for downloadId ${downloadId}) CALLED WITH: progress=${progress}, browserDlIdFromCallback=${browserDlIdFromCallback}`);
+                sendDownloadProgress(tabId, downloadId, progress, undefined, undefined, browserDlIdFromCallback);
             };
 
             // Check for force redownload flag and temporarily disable skip check
@@ -240,14 +258,16 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
 
             try {
                 // Now receiving the numeric downloadId from the browser API
-                const actualDownloadId = await downloadTrack(track, undefined, undefined, undefined, reportTrackProgress);
-                logger.logInfo(`Track download completed with browser download ID: ${actualDownloadId}`);
+                const actualBrowserDownloadId = await downloadTrack(track, undefined, undefined, undefined, reportTrackProgress);
+                logger.logInfo(`Track download process finished by downloadTrack. Reported browser download ID: ${actualBrowserDownloadId}`);
 
-                // Store the browser download ID in our closure variable for future progress reports
-                browserDlId = actualDownloadId;
+                // The final 101 with browser ID should have been sent by reportTrackProgress (called by downloadTrack).
+                // So, we don't need to explicitly call sendDownloadProgress(101) here again.
+                // This was already commented out in a previous step, ensuring it stays commented.
+                // sendDownloadProgress(tabId, downloadId, 101, undefined, undefined, actualBrowserDownloadId);
 
-                // Send a completion message with both our download ID and the browser's download ID
-                sendDownloadProgress(tabId, downloadId, 101, undefined, undefined, actualDownloadId);
+                browserDlId = actualBrowserDownloadId; // This line was for the commented-out sendDownloadProgress, may not be needed if reportTrackProgress handles all UI updates through background.
+                // However, keeping it doesn't harm and might be useful if we re-evaluate direct calls from messageHandler.
 
                 // Restore the skipExistingFiles setting if we changed it
                 if (forceRedownload && originalSkipSetting !== undefined) {
@@ -256,11 +276,11 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                 }
 
                 // Return success with both our download ID and the browser's download ID
+                // This return is for the promise of handleIncomingMessage, content.ts gets completion via sendDownloadProgress
                 return {
                     success: true,
-                    message: forceRedownload ? "Track force-redownloaded" : "Track download completed",
-                    downloadId: actualDownloadId,
-                    browserDownloadId: actualDownloadId,
+                    message: forceRedownload ? "Track force-redownloaded" : "Track download processing initiated and final status sent via progress",
+                    browserDownloadId: actualBrowserDownloadId, // Keep this for potential logging or if content script uses it from here
                     originalDownloadId: downloadId
                 };
             } catch (error) {
@@ -298,8 +318,14 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                 tabId
             });
 
+            const ackRangePayload = { success: true, originalDownloadId: downloadId, message: "Set range download command received, preparing tracks." };
+            logger.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD_SET_RANGE) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackRangePayload)));
+            sendMessageToTab(tabId, ackRangePayload)
+                .then(() => logger.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD_SET_RANGE) for ${downloadId} sent to tab ${tabId}.`))
+                .catch(e => logger.logError("[MessageHandler TX Ack] DOWNLOAD_SET_RANGE: Failed to send initial command ack to tab", e));
+
             // Send initial progress to update UI
-            sendDownloadProgress(tabId, downloadId, 0);
+            // sendDownloadProgress(tabId, downloadId, 0); // May be redundant
             delete pausedDownloads[downloadId];
 
             try {
@@ -477,7 +503,7 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                     logger.logInfo("Downloaded playlist range successfully!");
                     sendDownloadProgress(tabId, downloadId, 101);
                 }
-                return { success: true, message: "Playlist range download completed" };
+                return { success: true, message: "Playlist range download processing initiated and final status sent via progress.", originalDownloadId: downloadId };
             } catch (error) {
                 sendDownloadProgress(tabId, downloadId, undefined, error instanceof Error ? error : new MessageHandlerError(String(error)));
                 logger.logError("Download failed unexpectedly for set range", error);

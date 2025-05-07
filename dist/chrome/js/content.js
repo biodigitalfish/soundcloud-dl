@@ -1,4 +1,4 @@
-import { L as Logger, o as onMessage, m as loadConfiguration, v as configKeys, r as registerConfigChangeHandler, x as getPathFromExtensionFile, y as sendMessageToBackend, z as setOnConfigValueChanged } from "./config-BfcQhoHG.js";
+import { L as Logger, o as onMessage, n as loadConfiguration, v as configKeys, t as registerConfigChangeHandler, x as getPathFromExtensionFile, y as sendMessageToBackend, z as setOnConfigValueChanged } from "./config-Dc8IMhc1.js";
 class DomObserver {
   observer;
   events = [];
@@ -229,12 +229,48 @@ const resetButtonBackground = (button) => {
   button.style.color = "";
 };
 const handleMessageFromBackgroundScript = async (_, message) => {
-  const { downloadId: receivedDownloadId, progress, error, status, completionWithoutId, completed, timestamp, browserDownloadId, originalDownloadId } = message;
-  let finalDownloadId = originalDownloadId;
-  logger.logInfo(
-    `Message received: originalId=${originalDownloadId}, receivedId=${receivedDownloadId}, browserDlId=${browserDownloadId}, progress=${progress}, status=${status}, error=${error || "none"}`,
-    { message }
-  );
+  if (logger && typeof logger.logError === "function") {
+    logger.logError("[CONTENT_SCRIPT_RAW_MESSAGE_ENTRY] Message received:", JSON.parse(JSON.stringify(message || { emptyMessage: true })));
+  } else {
+    console.error("[CONTENT_SCRIPT_RAW_MESSAGE_ENTRY_CONSOLE_ERROR] Message received:", JSON.parse(JSON.stringify(message || { emptyMessageForConsole: true })));
+  }
+  const relevantKeys = [
+    "downloadId",
+    "progress",
+    "error",
+    "status",
+    "browserDownloadId",
+    "originalDownloadId",
+    // This key is added by background script in some responses
+    "completionWithoutId",
+    "completed",
+    "success",
+    // Key in ack messages from messageHandler
+    "timestamp"
+    // Common key we add
+  ];
+  const messageKeys = Object.keys(message || {});
+  const isRelevantMessage = messageKeys.some((key) => relevantKeys.includes(key));
+  if (!isRelevantMessage && messageKeys.length > 0) {
+    if (message && (message.contextId || message.envType) && !messageKeys.some((k) => ["downloadId", "progress", "status"].includes(k))) {
+      logger.logDebug("Discarding known irrelevant message (e.g., context menu click) early.", { message });
+    } else {
+      logger.logDebug("Discarding message early as it lacks relevant download progress/ack keys.", { message });
+    }
+    return true;
+  }
+  const { downloadId: receivedDownloadIdFromPayload, progress, error, status, completionWithoutId, completed, timestamp, browserDownloadId, originalDownloadId: originalIdFromPayload } = message;
+  logger.logDebug("[CS_SUPER_EARLY_DEBUG] Relevant message payload for handleMessageFromBackgroundScript: ", JSON.parse(JSON.stringify(message)));
+  let finalDownloadId;
+  if (originalIdFromPayload) {
+    finalDownloadId = originalIdFromPayload;
+    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.originalDownloadId: ${finalDownloadId}`);
+  } else if (receivedDownloadIdFromPayload) {
+    finalDownloadId = receivedDownloadIdFromPayload;
+    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
+  } else {
+    logger.logDebug("[CS_FID_LOGIC] Message has neither originalDownloadId nor downloadId at the top level of payload.");
+  }
   if (!finalDownloadId && browserDownloadId) {
     const matchedDownloadIds = Object.keys(downloadButtons).filter(
       (id) => downloadButtons[id].browserDownloadId === browserDownloadId
@@ -259,6 +295,10 @@ const handleMessageFromBackgroundScript = async (_, message) => {
     }
   }
   if (!finalDownloadId || finalDownloadId === "undefined_completion" || completionWithoutId) {
+    logger.logWarn(
+      `[CS_GENERIC_MATCH_ENTRY] Entering generic/undefined ID matching. finalDownloadId: ${finalDownloadId}, is_undefined_completion: ${finalDownloadId === "undefined_completion"}, completionWithoutId flag: ${completionWithoutId}. Message payload:`,
+      JSON.parse(JSON.stringify(message))
+    );
     const allPotentiallyActiveStates = ["Downloading", "Preparing", "Finishing", "Pausing", "Resuming"];
     const currentActiveDownloads = Object.keys(downloadButtons).filter(
       (id) => allPotentiallyActiveStates.includes(downloadButtons[id].state)
@@ -268,14 +308,14 @@ const handleMessageFromBackgroundScript = async (_, message) => {
     completed !== true && // destructured from message
     completionWithoutId !== true && // destructured from message
     error === void 0 && // destructured from message
-    typeof message === "object" && Object.keys(message).length <= (originalDownloadId ? 5 : message.type ? 2 : 1);
+    typeof message === "object" && Object.keys(message).length <= (originalIdFromPayload ? 5 : message.type ? 2 : 1);
     if (currentActiveDownloads.length === 0 && isMinimalMessage) {
       logger.logDebug(`Received minimal message (keys: ${Object.keys(message).join(", ") || "none"}) with no active downloads. Discarding.`, { message });
       return true;
     }
     logger.logWarn(`Received message (keys: ${Object.keys(message).join(", ") || "none"}) without a usable finalDownloadId or it is a generic completion. Attempting to match with active downloads (found ${currentActiveDownloads.length} using states: ${allPotentiallyActiveStates.join(", ")}).`);
     const isCompletionMessageEvaluation = progress === 101 || progress === 102 || completed === true || completionWithoutId === true || status === void 0 && error === void 0 && // destructured from message
-    typeof message === "object" && Object.keys(message).length <= (originalDownloadId ? 5 : 4);
+    typeof message === "object" && Object.keys(message).length <= (originalIdFromPayload ? 5 : 4);
     if (isCompletionMessageEvaluation) {
       const activeIdsForCompletionLogic = currentActiveDownloads;
       logger.logInfo(`Attempting to match as completion message. Found ${activeIdsForCompletionLogic.length} candidates using states: ${allPotentiallyActiveStates.join(", ")}.`);
@@ -350,6 +390,34 @@ const handleMessageFromBackgroundScript = async (_, message) => {
     return true;
   }
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
+  if (message.success === true && message.originalDownloadId === finalDownloadId) {
+    logger.logDebug(`[CS_DEBUG_ACK_INITIAL_MATCH] Early ack initial match for ${finalDownloadId}. Current button state: ${currentState}. Full Message:`, JSON.parse(JSON.stringify(message)));
+    if (currentState === "Preparing") {
+      logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] currentState is Preparing.");
+      if (message.progress === void 0) {
+        logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.progress is undefined.");
+        if (message.status === void 0) {
+          logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.status is undefined.");
+          if (message.completed === void 0) {
+            logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.completed is undefined.");
+            if (!message.error) {
+              logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] !message.error is true. ALL PRE-CONDITIONS FOR STATE TRANSITION MET.");
+            } else {
+              logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] !message.error FAILED. Error: ${message.error}`);
+            }
+          } else {
+            logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.completed FAILED. Was: ${message.completed}`);
+          }
+        } else {
+          logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.status FAILED. Was: ${message.status}`);
+        }
+      } else {
+        logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.progress FAILED. Was: ${message.progress}`);
+      }
+    } else {
+      logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] currentState was NOT Preparing. Was: ${currentState}`);
+    }
+  }
   if (browserDownloadId && !buttonData.browserDownloadId) {
     logger.logInfo(`Storing browserDownloadId=${browserDownloadId} for our finalDownloadId=${finalDownloadId}`);
     buttonData.browserDownloadId = browserDownloadId;
@@ -467,7 +535,43 @@ const handleMessageFromBackgroundScript = async (_, message) => {
   }
   return true;
 };
-onMessage(handleMessageFromBackgroundScript);
+logger.logError("[CONTENT_SCRIPT_LISTENER_SETUP] Attempting to set up onMessage listener NOW.");
+const scdlMessageListener = async (senderOrContext, messageOrPayload) => {
+  let actualPayload = messageOrPayload;
+  let actualSender = senderOrContext;
+  if (messageOrPayload && (messageOrPayload.contextId || messageOrPayload.envType) && senderOrContext && (typeof senderOrContext.downloadId !== "undefined" || typeof senderOrContext.originalDownloadId !== "undefined" || typeof senderOrContext.success !== "undefined" || typeof senderOrContext.progress !== "undefined")) {
+    const logMessage = "[CONTENT_SCRIPT_LISTENER_FIRED] Detected Firefox MV2 message misattribution. Using first argument (senderOrContext) as payload.";
+    if (typeof logger !== "undefined" && logger && typeof logger.logError === "function") {
+      logger.logError(
+        logMessage,
+        "Original first arg (senderOrContext, now payload):",
+        JSON.parse(JSON.stringify(senderOrContext)),
+        "Original second arg (messageOrPayload, now sender):",
+        JSON.parse(JSON.stringify(messageOrPayload))
+      );
+    } else {
+      console.error(
+        logMessage,
+        "Original first arg (senderOrContext, now payload):",
+        JSON.parse(JSON.stringify(senderOrContext)),
+        "Original second arg (messageOrPayload, now sender):",
+        JSON.parse(JSON.stringify(messageOrPayload))
+      );
+    }
+    actualPayload = senderOrContext;
+    actualSender = messageOrPayload;
+  } else {
+    const logMessage = "[CONTENT_SCRIPT_LISTENER_FIRED] Standard message processing.";
+    if (typeof logger !== "undefined" && logger && typeof logger.logError === "function") {
+      logger.logError(logMessage, "Arg1 (sender/context):", JSON.parse(JSON.stringify(senderOrContext || {})), "Arg2 (message/payload):", JSON.parse(JSON.stringify(messageOrPayload || {})));
+    } else {
+      console.error(logMessage, "Arg1 (sender/context):", JSON.parse(JSON.stringify(senderOrContext || {})), "Arg2 (message/payload):", JSON.parse(JSON.stringify(messageOrPayload || {})));
+    }
+  }
+  return handleMessageFromBackgroundScript(actualSender, actualPayload);
+};
+onMessage(scdlMessageListener);
+logger.logError(`[CONTENT_SCRIPT_LISTENER_SETUP] onMessage listener setup complete. Document readyState: ${document.readyState}`);
 const createDownloadButton = (small) => {
   const button = document.createElement("button");
   const buttonSizeClass = small ? "sc-button-small" : "sc-button-medium";

@@ -1,4 +1,4 @@
-import { L as Logger, a as LogLevel, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, g as getDefaultExportFromCjs, d as getConfigValue, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as getExtensionManifest, m as loadConfiguration, o as onMessage, n as onBeforeSendHeaders, p as onBeforeRequest, q as onPageActionClicked, r as registerConfigChangeHandler, t as openOptionsPage, u as sendMessageToTab } from "./config-BfcQhoHG.js";
+import { L as Logger, a as LogLevel, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, g as getDefaultExportFromCjs, d as getConfigValue, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as sendMessageToTab, m as getExtensionManifest, n as loadConfiguration, o as onMessage, p as onBeforeSendHeaders, q as onBeforeRequest, r as onPageActionClicked, t as registerConfigChangeHandler, u as openOptionsPage } from "./config-Dc8IMhc1.js";
 class RateLimitError extends Error {
   constructor(message) {
     super(message);
@@ -3269,10 +3269,10 @@ async function downloadTrack(track, trackNumber, albumName, playlistNameString, 
         hls: finalHlsFlag
       };
       logger$2.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
-      const downloadId = await handleDownload(downloadData, reportProgress);
-      logger$2.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload completed successfully for stream: ${finalStreamUrl} with downloadId: ${downloadId}`);
-      reportProgress(101);
-      return downloadId;
+      const browserDownloadIdFromHandler = await handleDownload(downloadData, reportProgress);
+      logger$2.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
+      reportProgress(101, browserDownloadIdFromHandler);
+      return browserDownloadIdFromHandler;
     } catch (error) {
       logger$2.logWarn(
         `[DownloadHandler TrackId: ${track.id}] Download attempt failed for option. Error: ${error?.message || error}`,
@@ -3614,16 +3614,15 @@ async function handleDownload(data, reportProgress) {
       if (!urlToDownload) {
         throw new Error("Data URL for download is undefined.");
       }
-      const downloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
-      logger$2.logInfo(`Successfully initiated download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with downloadId: ${downloadId}`);
+      const browserDownloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
+      logger$2.logInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
       if (shouldSkipExisting) {
         const histKey = `track-${data.trackId}`;
         const history = await loadConfigValue("track-download-history") || {};
         history[histKey] = { filename: finalDownloadFilename, timestamp: Date.now() };
         await storeConfigValue("track-download-history", history);
       }
-      reportProgress(101);
-      return downloadId;
+      return browserDownloadId;
     } catch (saveError) {
       logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
       throw new TrackError(`Save failed for track ${data.trackId}: ${saveError.message}`, data.trackId);
@@ -3670,11 +3669,21 @@ async function handleIncomingMessage(message, sender) {
     logger$1.logWarn("Message received without a valid tab ID", { sender, message });
     return { error: "No valid tab ID found in message sender" };
   }
+  if (type === DOWNLOAD && downloadId) {
+    const testMessagePayload = {
+      scdl_test_message: "HELLO_FROM_MESSAGE_HANDLER_EARLY_ACK_TEST",
+      testForDownloadId: downloadId,
+      timestamp: Date.now()
+    };
+    logger$1.logDebug(`[MessageHandler TX TestMsg] Attempting to send TEST MESSAGE to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(testMessagePayload)));
+    sendMessageToTab(tabId, testMessagePayload).then(() => logger$1.logInfo(`[MessageHandler TX TestMsg] TEST MESSAGE for downloadId ${downloadId} successfully sent to tab ${tabId} (promise resolved).`)).catch((e2) => logger$1.logError(`[MessageHandler TX TestMsg] TEST MESSAGE for downloadId ${downloadId} FAILED to send to tab ${tabId}:`, e2));
+  }
   try {
     if (type === DOWNLOAD_SET) {
       logger$1.logDebug("Received set download request", { url, downloadId });
-      sendDownloadProgress(tabId, downloadId, 0);
-      delete pausedDownloads[downloadId];
+      const ackSetPayload = { success: true, originalDownloadId: downloadId, message: "Set download command received, preparing tracks." };
+      logger$1.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD_SET) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackSetPayload)));
+      sendMessageToTab(tabId, ackSetPayload).then(() => logger$1.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD_SET) for ${downloadId} sent to tab ${tabId}.`)).catch((e2) => logger$1.logError("[MessageHandler TX Ack] DOWNLOAD_SET: Failed to send initial command ack to tab", e2));
       const set = await soundcloudApi$1.resolveUrl(url);
       if (!set) {
         throw new MessageHandlerError(`Failed to resolve SoundCloud URL. Check if you are logged in or if the URL is correct. URL: ${url}`);
@@ -3735,26 +3744,21 @@ async function handleIncomingMessage(message, sender) {
         logger$1.logInfo("Downloaded set successfully!");
         sendDownloadProgress(tabId, downloadId, 101);
       }
-      return { success: true, message: "Playlist download completed" };
+      return { success: true, message: "Playlist download processing initiated and final status sent via progress.", originalDownloadId: downloadId };
     } else if (type === DOWNLOAD) {
       logger$1.logDebug("Received track download request", { url, downloadId });
-      sendDownloadProgress(tabId, downloadId, 0);
+      const ackDownloadPayload = { success: true, originalDownloadId: downloadId, message: "Download command received, preparing track." };
+      logger$1.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackDownloadPayload)));
+      sendMessageToTab(tabId, ackDownloadPayload).then(() => logger$1.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD) for ${downloadId} sent to tab ${tabId}.`)).catch((e2) => logger$1.logError("[MessageHandler TX Ack] DOWNLOAD: Failed to send initial command ack to tab", e2));
       delete pausedDownloads[downloadId];
       const track = await soundcloudApi$1.resolveUrl(url);
       if (!track) {
         throw new MessageHandlerError(`Failed to resolve SoundCloud track URL: ${url}`);
       }
       let browserDlId;
-      const reportTrackProgress = (progress) => {
-        if (browserDlId !== void 0) {
-          sendDownloadProgress(tabId, downloadId, progress, void 0, void 0, browserDlId);
-        } else {
-          sendDownloadProgress(tabId, downloadId, progress);
-          if (progress === 101 && arguments.length > 1 && typeof arguments[1] === "number") {
-            browserDlId = arguments[1];
-            sendDownloadProgress(tabId, downloadId, progress, void 0, void 0, browserDlId);
-          }
-        }
+      const reportTrackProgress = (progress, browserDlIdFromCallback) => {
+        logger$1.logDebug(`[MessageHandler] reportTrackProgress (for downloadId ${downloadId}) CALLED WITH: progress=${progress}, browserDlIdFromCallback=${browserDlIdFromCallback}`);
+        sendDownloadProgress(tabId, downloadId, progress, void 0, void 0, browserDlIdFromCallback);
       };
       const forceRedownload = message.forceRedownload === true;
       let originalHistoryValue = null;
@@ -3801,19 +3805,18 @@ async function handleIncomingMessage(message, sender) {
         }
       }
       try {
-        const actualDownloadId = await downloadTrack(track, void 0, void 0, void 0, reportTrackProgress);
-        logger$1.logInfo(`Track download completed with browser download ID: ${actualDownloadId}`);
-        browserDlId = actualDownloadId;
-        sendDownloadProgress(tabId, downloadId, 101, void 0, void 0, actualDownloadId);
+        const actualBrowserDownloadId = await downloadTrack(track, void 0, void 0, void 0, reportTrackProgress);
+        logger$1.logInfo(`Track download process finished by downloadTrack. Reported browser download ID: ${actualBrowserDownloadId}`);
+        browserDlId = actualBrowserDownloadId;
         if (forceRedownload && originalSkipSetting !== void 0) {
           logger$1.logInfo("Restoring skipExistingFiles setting after force redownload");
           await storeConfigValue("skipExistingFiles", originalSkipSetting);
         }
         return {
           success: true,
-          message: forceRedownload ? "Track force-redownloaded" : "Track download completed",
-          downloadId: actualDownloadId,
-          browserDownloadId: actualDownloadId,
+          message: forceRedownload ? "Track force-redownloaded" : "Track download processing initiated and final status sent via progress",
+          browserDownloadId: actualBrowserDownloadId,
+          // Keep this for potential logging or if content script uses it from here
           originalDownloadId: downloadId
         };
       } catch (error) {
@@ -3843,7 +3846,9 @@ async function handleIncomingMessage(message, sender) {
         downloadId,
         tabId
       });
-      sendDownloadProgress(tabId, downloadId, 0);
+      const ackRangePayload = { success: true, originalDownloadId: downloadId, message: "Set range download command received, preparing tracks." };
+      logger$1.logDebug(`[MessageHandler TX Ack] Attempting to send EARLY ACK (DOWNLOAD_SET_RANGE) to tab ${tabId} for downloadId ${downloadId}:`, JSON.parse(JSON.stringify(ackRangePayload)));
+      sendMessageToTab(tabId, ackRangePayload).then(() => logger$1.logInfo(`[MessageHandler TX Ack] EARLY ACK (DOWNLOAD_SET_RANGE) for ${downloadId} sent to tab ${tabId}.`)).catch((e2) => logger$1.logError("[MessageHandler TX Ack] DOWNLOAD_SET_RANGE: Failed to send initial command ack to tab", e2));
       delete pausedDownloads[downloadId];
       try {
         const start = rangeMessage.start;
@@ -3989,7 +3994,7 @@ async function handleIncomingMessage(message, sender) {
           logger$1.logInfo("Downloaded playlist range successfully!");
           sendDownloadProgress(tabId, downloadId, 101);
         }
-        return { success: true, message: "Playlist range download completed" };
+        return { success: true, message: "Playlist range download processing initiated and final status sent via progress.", originalDownloadId: downloadId };
       } catch (error) {
         sendDownloadProgress(tabId, downloadId, void 0, error instanceof Error ? error : new MessageHandlerError(String(error)));
         logger$1.logError("Download failed unexpectedly for set range", error);
@@ -4144,9 +4149,7 @@ function sendDownloadProgress(tabId, downloadId, progress, error, status, browse
     logger.logInfo(`Sending COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress}`);
   } else if (progress === 100) {
     logger.logInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
-  } else if (progress !== void 0 && progress >= 0) {
-    logger.logDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
-  }
+  } else ;
   const downloadProgressMessage = {
     downloadId,
     progress,
@@ -4158,43 +4161,13 @@ function sendDownloadProgress(tabId, downloadId, progress, error, status, browse
     // Include browserDownloadId in all messages
   };
   if (progress === 101 || progress === 102) {
+    logger.logInfo(`Sending SINGLE COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress} (BrowserDownloadId: ${browserDownloadId || "N/A"})`);
     sendMessageToTab(tabId, downloadProgressMessage).catch((err) => {
-      logger.logWarn(`Failed to send completion message to tab ${tabId} on first attempt:`, err);
-      setTimeout(() => {
-        logger.logInfo(`Retrying completion message for download ${downloadId} to tab ${tabId}`);
-        sendMessageToTab(tabId, downloadProgressMessage).catch((retryErr) => {
-          logger.logError("Failed to send completion message on retry:", retryErr);
-        });
-      }, 500);
+      logger.logWarn(`Failed to send completion message to tab ${tabId}:`, err);
     });
-    setTimeout(() => {
-      logger.logInfo(`Sending backup completion message for download ${downloadId} to tab ${tabId}`);
-      const backupMessage = {
-        ...downloadProgressMessage,
-        completed: true,
-        backupMessage: true,
-        timestamp: Date.now()
-      };
-      sendMessageToTab(tabId, backupMessage).catch((err) => {
-        logger.logError("Failed to send backup completion message:", err);
-      });
-    }, 1e3);
-    setTimeout(() => {
-      logger.logInfo(`Sending final backup completion message for download ${downloadId} to tab ${tabId}`);
-      const finalBackupMessage = {
-        ...downloadProgressMessage,
-        completed: true,
-        backupMessage: true,
-        finalBackup: true,
-        timestamp: Date.now()
-      };
-      sendMessageToTab(tabId, finalBackupMessage).catch((err) => {
-        logger.logError("Failed to send final backup completion message:", err);
-      });
-    }, 5e3);
   } else {
     sendMessageToTab(tabId, downloadProgressMessage).catch((err) => {
-      logger.logWarn(`Failed to send progress message to tab ${tabId}:`, err);
+      logger.logWarn(`Failed to send progress/status message to tab ${tabId}:`, err);
     });
   }
 }

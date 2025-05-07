@@ -172,7 +172,7 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
   } else if (progress === 100) {
     logger.logInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
   } else if (progress !== undefined && progress >= 0) {
-    logger.logDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
+    // logger.logDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
   }
 
   const downloadProgressMessage: DownloadProgress = {
@@ -184,53 +184,17 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
     browserDownloadId      // Include browserDownloadId in all messages
   };
 
+  // SIMPLIFIED SENDING LOGIC:
+  // Only send one message, regardless of progress type.
+  // The previous logic for multiple timed messages for 101/102 is removed for testing.
   if (progress === 101 || progress === 102) {
+    logger.logInfo(`Sending SINGLE COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress} (BrowserDownloadId: ${browserDownloadId || "N/A"})`);
     sendMessageToTab(tabId, downloadProgressMessage).catch(err => {
-      logger.logWarn(`Failed to send completion message to tab ${tabId} on first attempt:`, err);
-
-      setTimeout(() => {
-        logger.logInfo(`Retrying completion message for download ${downloadId} to tab ${tabId}`);
-        sendMessageToTab(tabId, downloadProgressMessage).catch(retryErr => {
-          logger.logError("Failed to send completion message on retry:", retryErr);
-        });
-      }, 500);
+      logger.logWarn(`Failed to send completion message to tab ${tabId}:`, err);
     });
-
-    setTimeout(() => {
-      logger.logInfo(`Sending backup completion message for download ${downloadId} to tab ${tabId}`);
-
-      const backupMessage = {
-        ...downloadProgressMessage,
-        completed: true,
-        backupMessage: true,
-        timestamp: Date.now()
-      };
-
-      sendMessageToTab(tabId, backupMessage).catch(err => {
-        logger.logError("Failed to send backup completion message:", err);
-      });
-    }, 1000);
-
-    // Send one more final completion message with an even longer delay
-    // This helps catch cases where the tab might have been temporarily unresponsive
-    setTimeout(() => {
-      logger.logInfo(`Sending final backup completion message for download ${downloadId} to tab ${tabId}`);
-
-      const finalBackupMessage = {
-        ...downloadProgressMessage,
-        completed: true,
-        backupMessage: true,
-        finalBackup: true,
-        timestamp: Date.now()
-      };
-
-      sendMessageToTab(tabId, finalBackupMessage).catch(err => {
-        logger.logError("Failed to send final backup completion message:", err);
-      });
-    }, 5000);
-  } else {
+  } else { // For other progress, pause, resume, or general updates
     sendMessageToTab(tabId, downloadProgressMessage).catch(err => {
-      logger.logWarn(`Failed to send progress message to tab ${tabId}:`, err);
+      logger.logWarn(`Failed to send progress/status message to tab ${tabId}:`, err);
     });
   }
 }

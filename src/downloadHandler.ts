@@ -74,7 +74,7 @@ export async function downloadTrack(
     trackNumber: number | undefined,
     albumName: string | undefined,
     playlistNameString: string | undefined,
-    reportProgress: (progress?: number) => void
+    reportProgress: (progress?: number, browserDownloadId?: number) => void
 ): Promise<number> {
     if (!isValidTrack(track)) { // Uses local helper
         logger.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
@@ -160,11 +160,16 @@ export async function downloadTrack(
             };
 
             logger.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
-            // Calls handleDownload from the same module and gets the downloadId
-            const downloadId = await handleDownload(downloadData, reportProgress);
-            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload completed successfully for stream: ${finalStreamUrl} with downloadId: ${downloadId}`);
-            reportProgress(101);
-            return downloadId; // Return the downloadId up the chain
+            // Calls handleDownload from the same module and gets the browser's downloadId
+            // The reportProgress callback passed to handleDownload will handle progress from 0 up to just before file saving.
+            const browserDownloadIdFromHandler = await handleDownload(downloadData, reportProgress);
+
+            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
+
+            // downloadTrack now takes responsibility for the final 101 signal WITH the browser ID.
+            // This ensures that the browserDownloadId is available when 101 is reported.
+            reportProgress(101, browserDownloadIdFromHandler);
+            return browserDownloadIdFromHandler; // Return the browser's downloadId up the chain
 
         } catch (error) {
             logger.logWarn(
@@ -176,12 +181,12 @@ export async function downloadTrack(
     }
 
     logger.logError(`[DownloadHandler TrackId: ${track.id}] All download attempts failed after trying ${downloadDetails.length} options.`);
-    reportProgress(102);
+    reportProgress(102); // No browser ID to report here if all failed before that stage
     // Use the TrackError defined in this module
     throw new TrackError("No version of this track could be downloaded", track.id);
 }
 
-export async function handleDownload(data: DownloadData, reportProgress: (progress?: number) => void): Promise<number> {
+export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<number> {
     // --- DEBUG START: Moved to very beginning ---
     logger.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
     // --- DEBUG END ---
@@ -569,8 +574,8 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             }
 
             // Get the downloadId from downloadToFile
-            const downloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
-            logger.logInfo(`Successfully initiated download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with downloadId: ${downloadId}`);
+            const browserDownloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
+            logger.logInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
 
             if (shouldSkipExisting) {
                 const histKey = `track-${data.trackId}`;
@@ -578,8 +583,10 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                 history[histKey] = { filename: finalDownloadFilename, timestamp: Date.now() };
                 await storeConfigValue("track-download-history", history);
             }
-            reportProgress(101);
-            return downloadId; // Return the downloadId to the caller
+            // REMOVED: reportProgress(101); 
+            // The function now returns the browser's download ID.
+            // The caller (downloadTrack) will be responsible for the final 101 progress report.
+            return browserDownloadId;
         } catch (saveError) {
             logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
             throw new TrackError(`Save failed for track ${data.trackId}: ${(saveError as Error).message}`, data.trackId);
@@ -589,6 +596,9 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
 
     } catch (error) {
         logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Uncaught error in handleDownload`, error);
+        // Ensure progress is reported as error if it hasn't reached completion stage
+        // However, reportProgress might not be defined if error is very early. Consider implications.
+        // reportProgress(undefined); // This might be too simplistic or cause issues if called too early.
         if (error instanceof TrackError) {
             throw error;
         } else {
