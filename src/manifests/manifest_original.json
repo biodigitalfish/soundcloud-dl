@@ -54,7 +54,7 @@
     "ffmpeg-core/*",
     "js/config-*.js"
   ],
-  "content_security_policy": "script-src 'self' 'unsafe-eval' blob: 'wasm-unsafe-eval'; object-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: https://api-v2.soundcloud.com https://cf-hls-aac-media.sndcdn.com https://cf-hls-media.sndcdn.com https://*.sndcdn.com;",
+  "content_security_policy": "script-src 'self' 'unsafe-eval' blob: 'wasm-unsafe-eval'; object-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: https://*.soundcloud.com https://*.sndcdn.com;",
   "browser_specific_settings": {
     "gecko": {
       "id": "{c7a839e7-7086-4021-8176-1cfcb7f169ce}"

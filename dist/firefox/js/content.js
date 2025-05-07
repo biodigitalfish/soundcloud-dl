@@ -1,5 +1,5 @@
 import { L as Logger } from "./logger-DNjPuH99.js";
-import { p as onMessage, o as loadConfiguration, z as configKeys, u as registerConfigChangeHandler, g as getPathFromExtensionFile, B as sendMessageToBackend, C as determineIfUrlIsSet, D as setOnConfigValueChanged } from "./config-Cbcs9AtA.js";
+import { p as onMessage, o as loadConfiguration, z as configKeys, u as registerConfigChangeHandler, g as getPathFromExtensionFile, B as sendMessageToBackend, C as determineIfUrlIsSet, D as setOnConfigValueChanged } from "./config-CAI3Vpb8.js";
 class DomObserver {
   observer;
   events = [];
@@ -694,7 +694,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
             const timeSinceLastProgress = Date.now() - lastProgressTime;
             if (timeSinceLastProgress > 3e5) {
               logger.logWarn(`Range download completion safety timeout triggered for ID ${mainButtonId}. Download seems stuck for ${timeSinceLastProgress / 1e3}s`);
-              if (timeSinceLastProgress > 6e5) {
+              if (timeSinceLastProgress > 18e5) {
                 logger.logInfo(`Assuming potential silent completion for range download ${mainButtonId}`);
                 resetButtonBackground(buttonData.elem);
                 buttonData.elem.style.backgroundColor = "#19a352";
@@ -709,7 +709,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
               }
             }
           }
-        }, 6e5);
+        }, 18e5);
         logger.logInfo("Sending range download message:", {
           type: "DOWNLOAD_SET_RANGE",
           url: buttonData.originalUrl,

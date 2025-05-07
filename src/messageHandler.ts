@@ -14,6 +14,7 @@ import {
 import { loadConfigValue, storeConfigValue, getConfigValue } from "./utils/config";
 import { MetadataExtractor } from "./metadataExtractor";
 import { eraseDownloadHistoryEntry } from "./utils/browser";
+import { Semaphore } from "./utils/semaphore";
 
 // Message Type Constants
 export const DOWNLOAD_SET = "DOWNLOAD_SET";
@@ -34,6 +35,12 @@ const pausedDownloads: { [downloadId: string]: boolean } = {};
 
 const soundcloudApi = new SoundCloudApi();
 const logger = Logger.create("MessageHandler", LogLevel.Debug);
+
+// ADDED: Semaphore for controlling downloadTrack concurrency
+// const downloadTrackSemaphore = new Semaphore(3); // Old hardcoded value
+const initialMaxConcurrentDownloads = Math.max(1, Math.min(Number(getConfigValue("maxConcurrentTrackDownloads")) || 3, 10));
+const downloadTrackSemaphore = new Semaphore(initialMaxConcurrentDownloads);
+logger.logInfo(`Download track semaphore initialized with concurrency: ${initialMaxConcurrentDownloads}`);
 
 // Main message handling function
 export async function handleIncomingMessage(message: DownloadRequest, sender: chrome.runtime.MessageSender) {
@@ -141,8 +148,11 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                         for (let i = 0; i < tracks.length; i++) {
                             const originalIndex = set.tracks.findIndex(t => t.id === tracks[i].id);
                             const trackNumber = originalIndex !== -1 ? originalIndex + 1 : undefined;
-                            const download = downloadTrack(tracks[i], trackNumber, setAlbumName, setPlaylistName, reportPlaylistProgress(tracks[i].id));
-                            downloads.push(download);
+                            // MODIFIED: Wrap downloadTrack in semaphore
+                            const trackDownloadPromise = downloadTrackSemaphore.withLock(() =>
+                                downloadTrack(tracks[i], trackNumber, setAlbumName, setPlaylistName, reportPlaylistProgress(tracks[i].id))
+                            );
+                            downloads.push(trackDownloadPromise);
                         }
 
                         await Promise.all(
@@ -416,12 +426,15 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
                             const trackNumber = originalIndex !== -1 ? originalIndex + 1 : undefined;
 
                             try {
-                                const download = downloadTrack(
-                                    trackInfo,
-                                    trackNumber,
-                                    setAlbumName,
-                                    setPlaylistName,
-                                    reportPlaylistProgress(trackInfo.id)
+                                // MODIFIED: Wrap downloadTrack in semaphore
+                                const download = downloadTrackSemaphore.withLock(() =>
+                                    downloadTrack(
+                                        trackInfo,
+                                        trackNumber,
+                                        setAlbumName,
+                                        setPlaylistName,
+                                        reportPlaylistProgress(trackInfo.id)
+                                    )
                                 );
                                 downloads.push(download);
                             } catch (trackError) {

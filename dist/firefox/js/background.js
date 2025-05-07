@@ -1,5 +1,5 @@
 import { L as Logger, a as LogLevel } from "./logger-DNjPuH99.js";
-import { g as getPathFromExtensionFile, c as concatArrayBuffers, X as XRegExp, a as commonjsGlobal, b as getDefaultExportFromCjs, d as getConfigValue, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as sendMessageToTab, m as eraseDownloadHistoryEntry, n as getExtensionManifest, o as loadConfiguration, p as onMessage, q as onBeforeSendHeaders, r as onBeforeRequest, t as onPageActionClicked, u as registerConfigChangeHandler, v as setAuthHeaderRule, w as setClientIdRule, x as usesDeclarativeNetRequestForModification, y as openOptionsPage } from "./config-Cbcs9AtA.js";
+import { g as getPathFromExtensionFile, a as getConfigValue, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, d as getDefaultExportFromCjs, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as sendMessageToTab, m as eraseDownloadHistoryEntry, n as getExtensionManifest, o as loadConfiguration, p as onMessage, q as onBeforeSendHeaders, r as onBeforeRequest, t as onPageActionClicked, u as registerConfigChangeHandler, v as setAuthHeaderRule, w as setClientIdRule, x as usesDeclarativeNetRequestForModification, y as openOptionsPage } from "./config-CAI3Vpb8.js";
 class RateLimitError extends Error {
   constructor(message) {
     super(message);
@@ -513,50 +513,178 @@ const toBlobURL = async (url, mimeType, progress = false, cb) => {
   const blob = new Blob([buf], { type: mimeType });
   return URL.createObjectURL(blob);
 };
-const logger$3 = Logger.create("FFmpegSetup", LogLevel.Debug);
-const ffmpeg = new FFmpeg();
-let ffmpegLoaded = false;
-let ffmpegLoadPromise = null;
-ffmpeg.on("log", ({ message }) => {
-  if (!message.startsWith("frame=")) {
-    logger$3.logDebug(`[FFMPEG_WASM] ${message}`);
+const baseLogger = Logger.create("FFmpegInstance", LogLevel.Debug);
+async function createAndLoadFFmpegInstance(instanceId) {
+  const instanceLogger = instanceId ? Logger.create(`FFmpegInstance:${instanceId}`, LogLevel.Debug) : baseLogger;
+  const newFfmpeg = new FFmpeg();
+  newFfmpeg.on("log", ({ message }) => {
+    if (!message.startsWith("frame=")) {
+      instanceLogger.logDebug(`[FFMPEG_WASM_LOG] ${message}`);
+    }
+  });
+  instanceLogger.logInfo("[FFMPEG_WASM] Initializing new FFmpeg.wasm instance from local files (using toBlobURL strategy)...");
+  try {
+    const corePathSuffix = "ffmpeg-core/";
+    const coreBaseURL = getPathFromExtensionFile(corePathSuffix);
+    if (!coreBaseURL) {
+      instanceLogger.logError("[FFMPEG_WASM] Failed to get base URL for FFmpeg core files.");
+      return null;
+    }
+    const coreJsPath = coreBaseURL + "ffmpeg-core.js";
+    const coreWasmPath = coreBaseURL + "ffmpeg-core.wasm";
+    instanceLogger.logInfo(`[FFMPEG_WASM] Base URL for Blob: ${coreBaseURL}`);
+    instanceLogger.logInfo("[FFMPEG_WASM] Attempting to create Blob URLs for core files...");
+    const coreBlobURL = await toBlobURL(coreJsPath, "text/javascript");
+    const wasmBlobURL = await toBlobURL(coreWasmPath, "application/wasm");
+    instanceLogger.logInfo("[FFMPEG_WASM] Blob URLs created. Loading FFmpeg instance...");
+    await newFfmpeg.load({
+      coreURL: coreBlobURL,
+      wasmURL: wasmBlobURL
+    });
+    instanceLogger.logInfo("[FFMPEG_WASM] FFmpeg.wasm instance loaded successfully via Blob URLs.");
+    return newFfmpeg;
+  } catch (error) {
+    instanceLogger.logError("[FFMPEG_WASM] Failed to load FFmpeg.wasm instance via Blob URLs", error);
+    return null;
   }
-});
-async function loadFFmpeg() {
-  if (ffmpegLoaded) return true;
-  if (ffmpegLoadPromise) return ffmpegLoadPromise;
-  logger$3.logInfo("[FFMPEG_WASM] Initializing FFmpeg.wasm from local files (using toBlobURL strategy)...");
-  ffmpegLoadPromise = (async () => {
+}
+const logger$4 = Logger.create("FFmpegManager", LogLevel.Debug);
+const initialMaxFFmpegOperations = Math.max(1, Math.min(Number(getConfigValue("maxConcurrentTrackDownloads")) || 2, 10));
+const MAX_CONCURRENT_OPERATIONS = initialMaxFFmpegOperations;
+logger$4.logInfo(`FFmpegManager initialized with MAX_CONCURRENT_OPERATIONS: ${MAX_CONCURRENT_OPERATIONS}`);
+const ffmpegPool = [];
+const taskQueue = [];
+let poolInitialized = false;
+let poolInitializationPromise = null;
+async function initializePool() {
+  if (poolInitialized) return Promise.resolve();
+  if (poolInitializationPromise) return poolInitializationPromise;
+  logger$4.logInfo(`Initializing FFmpeg instance pool with size: ${MAX_CONCURRENT_OPERATIONS}`);
+  poolInitializationPromise = (async () => {
     try {
-      const corePathSuffix = "ffmpeg-core/";
-      const coreBaseURL = getPathFromExtensionFile(corePathSuffix);
-      if (!coreBaseURL) {
-        logger$3.logError("[FFMPEG_WASM] Failed to get base URL for FFmpeg core files.");
-        return false;
+      const loadPromises = [];
+      for (let i2 = 0; i2 < MAX_CONCURRENT_OPERATIONS; i2++) {
+        loadPromises.push(createAndLoadFFmpegInstance(i2));
       }
-      const coreJsPath = coreBaseURL + "ffmpeg-core.js";
-      const coreWasmPath = coreBaseURL + "ffmpeg-core.wasm";
-      logger$3.logInfo(`[FFMPEG_WASM] Base URL for Blob: ${coreBaseURL}`);
-      logger$3.logInfo("[FFMPEG_WASM] Attempting to create Blob URLs for core files...");
-      const coreBlobURL = await toBlobURL(coreJsPath, "text/javascript");
-      const wasmBlobURL = await toBlobURL(coreWasmPath, "application/wasm");
-      logger$3.logInfo("[FFMPEG_WASM] Blob URLs created. Loading FFmpeg...");
-      await ffmpeg.load({
-        coreURL: coreBlobURL,
-        wasmURL: wasmBlobURL
-      });
-      ffmpegLoaded = true;
-      logger$3.logInfo("[FFMPEG_WASM] FFmpeg.wasm loaded successfully via Blob URLs.");
-      return true;
+      const loadedInstances = await Promise.all(loadPromises);
+      for (let i2 = 0; i2 < loadedInstances.length; i2++) {
+        const instance = loadedInstances[i2];
+        if (instance) {
+          ffmpegPool.push({ id: i2, instance, isAvailable: true });
+        } else {
+          logger$4.logError(`Failed to load FFmpeg instance ${i2} for the pool.`);
+        }
+      }
+      if (ffmpegPool.length === 0 && MAX_CONCURRENT_OPERATIONS > 0) {
+        throw new Error("No FFmpeg instances could be initialized for the pool.");
+      }
+      poolInitialized = true;
+      logger$4.logInfo(`FFmpeg instance pool initialized with ${ffmpegPool.length} instances.`);
     } catch (error) {
-      logger$3.logError("[FFMPEG_WASM] Failed to load FFmpeg.wasm via Blob URLs", error);
-      ffmpegLoaded = false;
-      return false;
-    } finally {
-      if (!ffmpegLoaded) ffmpegLoadPromise = null;
+      logger$4.logError("Failed to initialize FFmpeg pool", error);
+      poolInitialized = false;
+      poolInitializationPromise = null;
+      throw error;
     }
   })();
-  return ffmpegLoadPromise;
+  return poolInitializationPromise;
+}
+async function _performRemux(instanceWrapper, task) {
+  const { instance, id: instanceId } = instanceWrapper;
+  const { taskId, inputBuffer, fileExtension, progressCallback, resolve, reject } = task;
+  const inputFilename = `input_${instanceId}.${fileExtension || "mp4"}`;
+  const outputFilename = `output_remuxed_${instanceId}.${fileExtension || "mp4"}`;
+  logger$4.logInfo(`[FFmpegManager] Instance ${instanceId} starting remux for task ${taskId}: ${inputFilename} -> ${outputFilename}`);
+  let ffmpegProgressHandler;
+  try {
+    await instance.writeFile(inputFilename, new Uint8Array(inputBuffer.slice(0)));
+    const ffmpegArgs = ["-loglevel", "debug", "-i", inputFilename, "-c", "copy", outputFilename];
+    if (progressCallback) {
+      let lastReportedFFmpegProgress = -1;
+      ffmpegProgressHandler = ({ progress }) => {
+        const currentFFmpegProgress = Math.round(progress * 100);
+        if (currentFFmpegProgress > lastReportedFFmpegProgress && currentFFmpegProgress <= 100) {
+          progressCallback(currentFFmpegProgress);
+          lastReportedFFmpegProgress = currentFFmpegProgress;
+        }
+      };
+      instance.on("progress", ffmpegProgressHandler);
+    }
+    await instance.exec(ffmpegArgs);
+    const outputData = await instance.readFile(outputFilename);
+    if (typeof outputData === "string") {
+      throw new Error("FFmpeg remux output was a string, expected Uint8Array");
+    }
+    logger$4.logInfo(`[FFmpegManager] Instance ${instanceId} finished remux for task ${taskId}`);
+    resolve(outputData.buffer.slice(0));
+  } catch (error) {
+    logger$4.logError(`[FFmpegManager] Instance ${instanceId} FAILED remux for task ${taskId}`, error);
+    reject(error);
+  } finally {
+    if (ffmpegProgressHandler && typeof instance.off === "function") {
+      instance.off("progress", ffmpegProgressHandler);
+    }
+    try {
+      await instance.deleteFile(inputFilename);
+      await instance.deleteFile(outputFilename);
+    } catch (cleanupError) {
+      logger$4.logWarn(`[FFmpegManager] Instance ${instanceId} failed to cleanup files for task ${taskId}`, cleanupError);
+    }
+  }
+}
+function processQueue() {
+  if (!poolInitialized || taskQueue.length === 0) {
+    return;
+  }
+  const availableInstanceWrapper = ffmpegPool.find((iw) => iw.isAvailable);
+  if (!availableInstanceWrapper) {
+    logger$4.logDebug("No FFmpeg instance available right now, queue length: " + taskQueue.length);
+    return;
+  }
+  const taskToProcess = taskQueue.shift();
+  if (!taskToProcess) {
+    return;
+  }
+  availableInstanceWrapper.isAvailable = false;
+  logger$4.logDebug(`Assigning task ${taskToProcess.taskId} to FFmpeg instance ${availableInstanceWrapper.id}`);
+  _performRemux(availableInstanceWrapper, taskToProcess).finally(() => {
+    availableInstanceWrapper.isAvailable = true;
+    logger$4.logDebug(`FFmpeg instance ${availableInstanceWrapper.id} is now available.`);
+    processQueue();
+  });
+}
+async function requestRemux(taskId, inputBuffer, fileExtension, ffmpegProgress) {
+  if (!poolInitialized && !poolInitializationPromise) {
+    initializePool().catch((err) => {
+      logger$4.logError("FFmpeg Pool Initialization failed lazily, subsequent requests might fail.", err);
+    });
+  }
+  if (poolInitializationPromise) {
+    await poolInitializationPromise;
+  }
+  if (!poolInitialized || ffmpegPool.length === 0) {
+    return Promise.reject(new Error("FFmpegManager: Pool not initialized or no instances available after init attempt."));
+  }
+  return new Promise((resolve, reject) => {
+    logger$4.logDebug(`Task ${taskId} added to FFmpeg remux queue.`);
+    taskQueue.push({
+      taskId,
+      inputBuffer,
+      fileExtension,
+      progressCallback: ffmpegProgress,
+      // Pass the FFMPEG specific progress callback
+      resolve,
+      reject
+    });
+    processQueue();
+  });
+}
+function preInitializeFFmpegPool() {
+  if (!poolInitialized && !poolInitializationPromise) {
+    initializePool().catch((err) => {
+      logger$4.logError("Pre-initialization of FFmpeg Pool failed.", err);
+    });
+  }
 }
 function e(e2) {
   return String(e2).split("").map((e3) => e3.charCodeAt(0));
@@ -3164,7 +3292,7 @@ class TrackError extends Error {
     super(`${message} (TrackId: ${trackId})`);
   }
 }
-const logger$2 = Logger.create("DownloadHandler", LogLevel.Debug);
+const logger$3 = Logger.create("DownloadHandler", LogLevel.Debug);
 const soundcloudApi$2 = new SoundCloudApi();
 function isValidTrack(track) {
   return track && track.kind === "track" && track.state === "finished" && (track.streamable || track.downloadable);
@@ -3182,7 +3310,7 @@ function getTranscodingDetails(details) {
     quality: transcoding.quality
   }));
   if (mpegStreams.length < 1) {
-    logger$2.logWarn("[DownloadHandler] No transcodings streams could be determined for Track " + details.id);
+    logger$3.logWarn("[DownloadHandler] No transcodings streams could be determined for Track " + details.id);
     return null;
   }
   let streams = mpegStreams.sort((a2, b) => {
@@ -3196,13 +3324,13 @@ function getTranscodingDetails(details) {
     streams = streams.filter((stream) => stream.quality !== "hq");
   }
   if (streams.some((stream) => stream.quality === "hq")) {
-    logger$2.logInfo("[DownloadHandler] Including high quality streams for Track " + details.id);
+    logger$3.logInfo("[DownloadHandler] Including high quality streams for Track " + details.id);
   }
   return streams;
 }
 async function downloadTrack(track, trackNumber, albumName, playlistNameString, reportProgress) {
   if (!isValidTrack(track)) {
-    logger$2.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
+    logger$3.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
     throw new TrackError("Track does not satisfy constraints needed to be downloadable", track.id);
   }
   const downloadDetails = [];
@@ -3233,14 +3361,14 @@ async function downloadTrack(track, trackNumber, albumName, playlistNameString, 
     let resolvedExtension = void 0;
     try {
       if (isTranscodingDetails(downloadDetail)) {
-        logger$2.logDebug(`[DownloadHandler TrackId: ${track.id}] Getting stream details for transcoding`, downloadDetail);
+        logger$3.logDebug(`[DownloadHandler TrackId: ${track.id}] Getting stream details for transcoding`, downloadDetail);
         stream = await soundcloudApi$2.getStreamDetails(downloadDetail.url);
         if (stream) {
           hlsUsed = stream.hls;
           resolvedStreamUrl = stream.url;
           resolvedExtension = stream.extension;
         } else {
-          logger$2.logWarn(`[DownloadHandler TrackId: ${track.id}] Failed to get stream details for transcoding option (url: ${downloadDetail.url}), trying next...`);
+          logger$3.logWarn(`[DownloadHandler TrackId: ${track.id}] Failed to get stream details for transcoding option (url: ${downloadDetail.url}), trying next...`);
           continue;
         }
       } else {
@@ -3248,10 +3376,10 @@ async function downloadTrack(track, trackNumber, albumName, playlistNameString, 
         resolvedStreamUrl = stream.url;
         hlsUsed = stream.hls;
         resolvedExtension = stream.extension;
-        logger$2.logDebug(`[DownloadHandler TrackId: ${track.id}] Using direct download detail (original file?)`, { url: resolvedStreamUrl, hls: hlsUsed, extension: resolvedExtension });
+        logger$3.logDebug(`[DownloadHandler TrackId: ${track.id}] Using direct download detail (original file?)`, { url: resolvedStreamUrl, hls: hlsUsed, extension: resolvedExtension });
       }
       if (!resolvedStreamUrl) {
-        logger$2.logWarn(`[DownloadHandler TrackId: ${track.id}] No stream URL resolved, trying next...`, { downloadDetail });
+        logger$3.logWarn(`[DownloadHandler TrackId: ${track.id}] No stream URL resolved, trying next...`, { downloadDetail });
         continue;
       }
       let finalStreamUrl = resolvedStreamUrl;
@@ -3272,24 +3400,24 @@ async function downloadTrack(track, trackNumber, albumName, playlistNameString, 
         playlistName: playlistNameString,
         hls: finalHlsFlag
       };
-      logger$2.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
+      logger$3.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
       const browserDownloadIdFromHandler = await handleDownload(downloadData, reportProgress);
-      logger$2.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
+      logger$3.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
       reportProgress(101, browserDownloadIdFromHandler);
       return browserDownloadIdFromHandler;
     } catch (error) {
-      logger$2.logWarn(
+      logger$3.logWarn(
         `[DownloadHandler TrackId: ${track.id}] Download attempt failed for option. Error: ${error?.message || error}`,
         { downloadDetail, streamUrl: resolvedStreamUrl }
       );
     }
   }
-  logger$2.logError(`[DownloadHandler TrackId: ${track.id}] All download attempts failed after trying ${downloadDetails.length} options.`);
+  logger$3.logError(`[DownloadHandler TrackId: ${track.id}] All download attempts failed after trying ${downloadDetails.length} options.`);
   reportProgress(102);
   throw new TrackError("No version of this track could be downloaded", track.id);
 }
 async function handleDownload(data, reportProgress) {
-  logger$2.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
+  logger$3.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
   let artistsString = data.username;
   let titleString = data.title;
   let rawFilenameBase;
@@ -3305,7 +3433,7 @@ async function handleDownload(data, reportProgress) {
   let potentialDownloadFilename;
   try {
     try {
-      logger$2.logInfo(`Initiating metadata processing for ${data.trackId} with payload`, { payload: data });
+      logger$3.logInfo(`Initiating metadata processing for ${data.trackId} with payload`, { payload: data });
       if (getConfigValue("normalize-track")) {
         const extractor = new MetadataExtractor(data.title, data.username, data.userPermalink);
         let artists = extractor.getArtists();
@@ -3323,7 +3451,7 @@ async function handleDownload(data, reportProgress) {
       if (!titleString) titleString = "Unknown";
       rawFilenameBase = sanitizeFilenameForDownload(`${artistsString} - ${titleString}`);
     } catch (error) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata processing:`, error);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata processing:`, error);
       throw new TrackError(`Metadata processing failed for track ${data.trackId}: ${error.message}`, data.trackId);
     }
     saveAs = !getConfigValue("download-without-prompt");
@@ -3352,41 +3480,41 @@ async function handleDownload(data, reportProgress) {
         }
         const trackIdKey = `track-${data.trackId}`;
         const trackDownloadHistory = await loadConfigValue("track-download-history") || {};
-        logger$2.logDebug(`[History Check] shouldSkipExisting=${shouldSkipExisting}, trackIdKey=${trackIdKey}, history exists=${!!trackDownloadHistory}`);
+        logger$3.logDebug(`[History Check] shouldSkipExisting=${shouldSkipExisting}, trackIdKey=${trackIdKey}, history exists=${!!trackDownloadHistory}`);
         if (Object.keys(trackDownloadHistory).length > 0) {
-          logger$2.logDebug(`[History Check] History has ${Object.keys(trackDownloadHistory).length} entries`);
+          logger$3.logDebug(`[History Check] History has ${Object.keys(trackDownloadHistory).length} entries`);
         }
         if (trackDownloadHistory && trackDownloadHistory[trackIdKey]) {
           const previousDownload = trackDownloadHistory[trackIdKey];
-          logger$2.logInfo(`Skipping download for TrackId: ${data.trackId}. Previously downloaded as: ${previousDownload.filename} at ${new Date(previousDownload.timestamp).toLocaleString()}`);
+          logger$3.logInfo(`Skipping download for TrackId: ${data.trackId}. Previously downloaded as: ${previousDownload.filename} at ${new Date(previousDownload.timestamp).toLocaleString()}`);
           reportProgress(101);
           const fakeDownloadId = Math.floor(Math.random() * 1e6) + 1e3;
-          logger$2.logInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
+          logger$3.logInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
           return fakeDownloadId;
         }
         const specificFilename = `${pathPrefix}${rawFilenameBase}.${data.fileExtension || "mp3"}`;
         const exactQuery = { filename: specificFilename };
-        logger$2.logDebug(`[History Check] Searching downloads with exactQuery: ${JSON.stringify(exactQuery)}`);
+        logger$3.logDebug(`[History Check] Searching downloads with exactQuery: ${JSON.stringify(exactQuery)}`);
         const exactMatches = await searchDownloads(exactQuery);
-        logger$2.logDebug(`[History Check] exactMatches found: ${exactMatches.length}`);
+        logger$3.logDebug(`[History Check] exactMatches found: ${exactMatches.length}`);
         const escapedPathPrefix = pathPrefix.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
         const escapedRawFilenameBase = rawFilenameBase.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
         const regexQuery = { filenameRegex: `^${escapedPathPrefix}${escapedRawFilenameBase}\\..+$` };
-        logger$2.logDebug(`[History Check] Searching downloads with regexQuery: ${JSON.stringify(regexQuery)}`);
+        logger$3.logDebug(`[History Check] Searching downloads with regexQuery: ${JSON.stringify(regexQuery)}`);
         const regexMatches = exactMatches.length === 0 ? await searchDownloads(regexQuery) : [];
-        logger$2.logDebug(`[History Check] regexMatches found: ${regexMatches.length}`);
+        logger$3.logDebug(`[History Check] regexMatches found: ${regexMatches.length}`);
         const filenameWithoutPathRegex = `${escapedRawFilenameBase}\\..+$`;
         const titleArtistQuery = { filenameRegex: filenameWithoutPathRegex };
-        logger$2.logDebug(`[History Check] Searching downloads with titleArtistQuery: ${JSON.stringify(titleArtistQuery)}`);
+        logger$3.logDebug(`[History Check] Searching downloads with titleArtistQuery: ${JSON.stringify(titleArtistQuery)}`);
         const titleArtistMatches = exactMatches.length === 0 && regexMatches.length === 0 ? await searchDownloads(titleArtistQuery) : [];
-        logger$2.logDebug(`[History Check] titleArtistMatches found: ${titleArtistMatches.length}`);
+        logger$3.logDebug(`[History Check] titleArtistMatches found: ${titleArtistMatches.length}`);
         const allMatches = [...exactMatches, ...regexMatches, ...titleArtistMatches];
         const completedDownloads = allMatches.filter((d) => d.state === "complete");
         if (completedDownloads.length > 0) {
-          logger$2.logInfo(`Skipping download for TrackId: ${data.trackId}. File already exists in download history: ${completedDownloads[0].filename}`);
+          logger$3.logInfo(`Skipping download for TrackId: ${data.trackId}. File already exists in download history: ${completedDownloads[0].filename}`);
           if (completedDownloads.length > 0) {
             completedDownloads.slice(0, 3).forEach((download, i2) => {
-              logger$2.logDebug(`[History Check] Match ${i2}: filename=${download.filename}, state=${download.state}`);
+              logger$3.logDebug(`[History Check] Match ${i2}: filename=${download.filename}, state=${download.state}`);
             });
           }
           trackDownloadHistory[trackIdKey] = {
@@ -3396,31 +3524,31 @@ async function handleDownload(data, reportProgress) {
           await storeConfigValue("track-download-history", trackDownloadHistory);
           reportProgress(101);
           const fakeDownloadId = Math.floor(Math.random() * 1e6) + 1e3;
-          logger$2.logInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
+          logger$3.logInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
           return fakeDownloadId;
         } else {
-          logger$2.logDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
+          logger$3.logDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
         }
       } else {
-        logger$2.logDebug("[History Check] Skip existing files check is disabled");
+        logger$3.logDebug("[History Check] Skip existing files check is disabled");
       }
     } catch (error) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during filename/skip logic:`, error);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during filename/skip logic:`, error);
       throw new TrackError(`Filename/skip logic failed for track ${data.trackId}: ${error.message}`, data.trackId);
     }
     try {
       if (!artworkUrl) {
-        logger$2.logInfo(`No Artwork URL in data. Fallback to User Avatar (TrackId: ${data.trackId})`);
+        logger$3.logInfo(`No Artwork URL in data. Fallback to User Avatar (TrackId: ${data.trackId})`);
         artworkUrl = data.avatarUrl;
       }
     } catch (error) {
-      logger$2.logWarn(`[DownloadHandler TrackId: ${data.trackId}] Error checking/falling back artwork URL: ${error.message}. Will attempt with current value.`);
+      logger$3.logWarn(`[DownloadHandler TrackId: ${data.trackId}] Error checking/falling back artwork URL: ${error.message}. Will attempt with current value.`);
     }
-    logger$2.logInfo(`Starting download of '${rawFilenameBase}' (TrackId: ${data.trackId})...`);
+    logger$3.logInfo(`Starting download of '${rawFilenameBase}' (TrackId: ${data.trackId})...`);
     let originalStreamBuffer;
     try {
       if (data.hls) {
-        logger$2.logInfo(`[TrackId: ${data.trackId}] Starting HLS segment fetching from: ${data.streamUrl}`);
+        logger$3.logInfo(`[TrackId: ${data.trackId}] Starting HLS segment fetching from: ${data.streamUrl}`);
         const [playlistBuffer, initialHeaders] = await soundcloudApi$2.downloadStream(data.streamUrl, (p) => {
           if (p !== void 0) reportProgress(p * 0.1);
         });
@@ -3500,43 +3628,33 @@ async function handleDownload(data, reportProgress) {
       const ffmpegRemuxEnabled = getConfigValue("ffmpeg-remux-hls-mp4");
       if (ffmpegRemuxEnabled && (data.fileExtension === "m4a" || data.fileExtension === "mp4")) {
         reportProgress(85);
-        const ffmpegReady = await loadFFmpeg();
-        if (ffmpegReady) {
-          const inputFilename = `input.${data.fileExtension || "mp4"}`;
-          const outputFilename = `output_remuxed.${data.fileExtension || "mp4"}`;
-          let progressHandlerFfmpeg;
-          try {
-            await ffmpeg.writeFile(inputFilename, new Uint8Array(originalStreamBuffer.slice(0)));
-            const ffmpegArgs = ["-loglevel", "warning", "-i", inputFilename, "-c", "copy", outputFilename];
-            let lastReportedFFmpegProgress = -1;
-            progressHandlerFfmpeg = ({ progress }) => {
-              const currentFFmpegProgress = Math.round(progress * 100);
-              if (currentFFmpegProgress > lastReportedFFmpegProgress && currentFFmpegProgress <= 100) {
-                reportProgress(85 + Math.floor(currentFFmpegProgress * 0.13));
-                lastReportedFFmpegProgress = currentFFmpegProgress;
-              }
-            };
-            ffmpeg.on("progress", progressHandlerFfmpeg);
-            await ffmpeg.exec(ffmpegArgs);
-            const outputData = await ffmpeg.readFile(outputFilename);
-            if (typeof outputData === "string") throw new Error("FFmpeg remux output was a string");
-            streamBuffer = outputData.buffer.slice(0);
-            if (data.fileExtension === "m4a" || data.fileExtension === "mp4") determinedContentType = "audio/mp4";
-            reportProgress(99);
-            await ffmpeg.deleteFile(inputFilename);
-            await ffmpeg.deleteFile(outputFilename);
-          } catch (ffmpegError) {
-            logger$2.logError("[FFMPEG_WASM] Error during remux. Proceeding with original.", ffmpegError);
-            streamBuffer = originalStreamBuffer.slice(0);
-          } finally {
-            if (progressHandlerFfmpeg && typeof ffmpeg.off === "function") ffmpeg.off("progress", progressHandlerFfmpeg);
-          }
-        } else {
-          logger$2.logWarn("[FFMPEG_WASM] Remux skipped as FFmpeg failed to load.");
+        const handleFFmpegInternalProgress = (ffmpegInternalProgress) => {
+          const overallProgressUpdate = 85 + Math.floor(ffmpegInternalProgress * 0.13);
+          reportProgress(overallProgressUpdate);
+        };
+        try {
+          logger$3.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager.`);
+          const remuxedBuffer = await requestRemux(
+            data.trackId.toString(),
+            // Ensure taskId is a string for the manager
+            originalStreamBuffer,
+            // This is the buffer to be remuxed
+            data.fileExtension || "mp4",
+            handleFFmpegInternalProgress
+          );
+          streamBuffer = remuxedBuffer;
+          if (data.fileExtension === "m4a" || data.fileExtension === "mp4") determinedContentType = "audio/mp4";
+          reportProgress(99);
+          logger$3.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Remux task completed by FFmpegManager.`);
+        } catch (ffmpegError) {
+          logger$3.logError(`[FFMPEG_MANAGER] Error during remux via manager. Proceeding with original. TrackId: ${data.trackId}`, ffmpegError);
+          streamBuffer = originalStreamBuffer.slice(0);
         }
+      } else {
+        logger$3.logDebug(`[DownloadHandler TrackId: ${data.trackId}] FFmpeg remux skipped (disabled or not applicable filetype).`);
       }
     } catch (error) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during download/FFmpeg stage:`, error);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during download/FFmpeg stage:`, error);
       throw new TrackError(`Download/FFmpeg failed for track ${data.trackId}: ${error.message}`, data.trackId);
     }
     let taggedBuffer;
@@ -3565,26 +3683,26 @@ async function handleDownload(data, reportProgress) {
               const fetchedArtworkBuffer = await artworkResponse.arrayBuffer();
               writer.setArtwork(fetchedArtworkBuffer);
             } catch (artworkError) {
-              logger$2.logWarn(`[Artwork] Failed to fetch/set artwork for tagging TrackId: ${data.trackId}`, artworkError);
+              logger$3.logWarn(`[Artwork] Failed to fetch/set artwork for tagging TrackId: ${data.trackId}`, artworkError);
             }
           }
           const tagWriterResult = await writer.getBuffer();
           if (tagWriterResult?.buffer?.byteLength > 0) {
             taggedBuffer = tagWriterResult.buffer;
           } else {
-            logger$2.logWarn("[Metadata] TagWriter returned invalid buffer. Using untagged buffer.");
+            logger$3.logWarn("[Metadata] TagWriter returned invalid buffer. Using untagged buffer.");
             taggedBuffer = streamBuffer.slice(0);
           }
         } else {
-          logger$2.logWarn(`[TrackId: ${data.trackId}] No TagWriter for ext '${data.fileExtension}'. Using untagged buffer.`);
+          logger$3.logWarn(`[TrackId: ${data.trackId}] No TagWriter for ext '${data.fileExtension}'. Using untagged buffer.`);
           taggedBuffer = streamBuffer.slice(0);
         }
       } else {
-        logger$2.logInfo(`[TrackId: ${data.trackId}] Metadata disabled or no streamBuffer. Using untagged.`);
+        logger$3.logInfo(`[TrackId: ${data.trackId}] Metadata disabled or no streamBuffer. Using untagged.`);
         taggedBuffer = streamBuffer?.slice(0);
       }
     } catch (error) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata tagging:`, error);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata tagging:`, error);
       taggedBuffer = streamBuffer?.slice(0);
     }
     let bufferToSave;
@@ -3592,17 +3710,17 @@ async function handleDownload(data, reportProgress) {
       bufferToSave = taggedBuffer?.byteLength > 0 ? taggedBuffer : streamBuffer?.byteLength > 0 ? streamBuffer.slice(0) : originalStreamBuffer?.byteLength > 0 ? originalStreamBuffer.slice(0) : (() => {
         throw new TrackError(`All buffers invalid for ${data.trackId}`, data.trackId);
       })();
-      if (bufferToSave.byteLength < 100) logger$2.logWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
+      if (bufferToSave.byteLength < 100) logger$3.logWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
       const blobOptions = {};
       if (determinedContentType) blobOptions.type = determinedContentType;
       else if (data.fileExtension === "mp3") blobOptions.type = "audio/mpeg";
       else if (data.fileExtension === "m4a" || data.fileExtension === "mp4") blobOptions.type = "audio/mp4";
       else if (data.fileExtension === "wav") blobOptions.type = "audio/wav";
       const downloadBlob = new Blob([bufferToSave], blobOptions);
-      logger$2.logInfo(`Creating URL for download (TrackId: ${data.trackId}). Service worker context: ${isServiceWorkerContext()}`);
+      logger$3.logInfo(`Creating URL for download (TrackId: ${data.trackId}). Service worker context: ${isServiceWorkerContext()}`);
       objectUrlToRevoke = await createURLFromBlob(downloadBlob);
     } catch (error) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Error preparing final buffer or Blob/DataURL:`, error);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Error preparing final buffer or Blob/DataURL:`, error);
       throw new TrackError(`Failed to prepare buffer/DataURL for track ${data.trackId}: ${error.message}`, data.trackId);
     }
     finalDownloadFilename = rawFilenameBase + "." + (data.fileExtension || "mp3");
@@ -3613,13 +3731,13 @@ async function handleDownload(data, reportProgress) {
       finalDownloadFilename = `${base}${playlistFolder}/${justTheFilename}`;
     }
     try {
-      logger$2.logInfo(`Downloading track as '${finalDownloadFilename}' (TrackId: ${data.trackId}). SaveAs: ${saveAs}`);
+      logger$3.logInfo(`Downloading track as '${finalDownloadFilename}' (TrackId: ${data.trackId}). SaveAs: ${saveAs}`);
       const urlToDownload = objectUrlToRevoke;
       if (!urlToDownload) {
         throw new Error("Data URL for download is undefined.");
       }
       const browserDownloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
-      logger$2.logInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
+      logger$3.logInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
       if (shouldSkipExisting) {
         const histKey = `track-${data.trackId}`;
         const history = await loadConfigValue("track-download-history") || {};
@@ -3628,16 +3746,71 @@ async function handleDownload(data, reportProgress) {
       }
       return browserDownloadId;
     } catch (saveError) {
-      logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
+      logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
       throw new TrackError(`Save failed for track ${data.trackId}: ${saveError.message}`, data.trackId);
     }
   } catch (error) {
-    logger$2.logError(`[DownloadHandler TrackId: ${data.trackId}] Uncaught error in handleDownload`, error);
+    logger$3.logError(`[DownloadHandler TrackId: ${data.trackId}] Uncaught error in handleDownload`, error);
     if (error instanceof TrackError) {
       throw error;
     } else {
       throw new TrackError(`Unknown error during download: ${error?.message || error}`, data.trackId);
     }
+  }
+}
+const logger$2 = Logger.create("Semaphore", LogLevel.Debug);
+class Semaphore {
+  tasks = [];
+  count;
+  maxCount;
+  constructor(count) {
+    if (count <= 0) {
+      throw new Error("Semaphore count must be a positive integer.");
+    }
+    this.count = count;
+    this.maxCount = count;
+  }
+  async acquire() {
+    logger$2.logDebug(`Acquire attempt: current count ${this.count}, tasks in queue ${this.tasks.length}`);
+    if (this.count > 0) {
+      this.count--;
+      logger$2.logDebug(`Acquired immediately. New count ${this.count}`);
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.tasks.push(resolve);
+      logger$2.logDebug(`Queued. New queue length ${this.tasks.length}`);
+    });
+  }
+  release() {
+    this.count++;
+    logger$2.logDebug(`Released. New count ${this.count}`);
+    if (this.tasks.length > 0) {
+      const nextTaskResolve = this.tasks.shift();
+      if (nextTaskResolve) {
+        this.count--;
+        logger$2.logDebug(`Processing queued task. New count ${this.count}, New queue length ${this.tasks.length}`);
+        nextTaskResolve();
+      }
+    }
+    if (this.count > this.maxCount) {
+      logger$2.logWarn(`Semaphore count (${this.count}) exceeded maxCount (${this.maxCount}) after release. This might indicate an issue.`);
+      this.count = this.maxCount;
+    }
+  }
+  async withLock(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+  getAvailablePermits() {
+    return this.count;
+  }
+  getQueueLength() {
+    return this.tasks.length;
   }
 }
 const DOWNLOAD_SET = "DOWNLOAD_SET";
@@ -3653,6 +3826,9 @@ class MessageHandlerError extends Error {
 const pausedDownloads = {};
 const soundcloudApi$1 = new SoundCloudApi();
 const logger$1 = Logger.create("MessageHandler", LogLevel.Debug);
+const initialMaxConcurrentDownloads = Math.max(1, Math.min(Number(getConfigValue("maxConcurrentTrackDownloads")) || 3, 10));
+const downloadTrackSemaphore = new Semaphore(initialMaxConcurrentDownloads);
+logger$1.logInfo(`Download track semaphore initialized with concurrency: ${initialMaxConcurrentDownloads}`);
 async function handleIncomingMessage(message, sender) {
   let receivedMessageForLog = {};
   try {
@@ -3731,8 +3907,10 @@ async function handleIncomingMessage(message, sender) {
             for (let i2 = 0; i2 < tracks.length; i2++) {
               const originalIndex = set.tracks.findIndex((t2) => t2.id === tracks[i2].id);
               const trackNumber = originalIndex !== -1 ? originalIndex + 1 : void 0;
-              const download = downloadTrack(tracks[i2], trackNumber, setAlbumName, setPlaylistName, reportPlaylistProgress(tracks[i2].id));
-              downloads.push(download);
+              const trackDownloadPromise = downloadTrackSemaphore.withLock(
+                () => downloadTrack(tracks[i2], trackNumber, setAlbumName, setPlaylistName, reportPlaylistProgress(tracks[i2].id))
+              );
+              downloads.push(trackDownloadPromise);
             }
             await Promise.all(
               downloads.map(
@@ -3935,12 +4113,14 @@ async function handleIncomingMessage(message, sender) {
               const originalIndex = set.tracks.findIndex((t2) => t2.id === trackInfo.id);
               const trackNumber = originalIndex !== -1 ? originalIndex + 1 : void 0;
               try {
-                const download = downloadTrack(
-                  trackInfo,
-                  trackNumber,
-                  setAlbumName,
-                  setPlaylistName,
-                  reportPlaylistProgress(trackInfo.id)
+                const download = downloadTrackSemaphore.withLock(
+                  () => downloadTrack(
+                    trackInfo,
+                    trackNumber,
+                    setAlbumName,
+                    setPlaylistName,
+                    reportPlaylistProgress(trackInfo.id)
+                  )
                 );
                 downloads.push(download);
               } catch (trackError) {
@@ -4019,6 +4199,7 @@ loadConfiguration(true).then(async () => {
   if (initialOauthToken) {
     await oauthTokenChanged(initialOauthToken);
   }
+  preInitializeFFmpegPool();
 });
 function sendDownloadProgress(tabId, downloadId, progress, error, status, browserDownloadId) {
   if (!downloadId || typeof downloadId !== "string" || downloadId.trim() === "") {

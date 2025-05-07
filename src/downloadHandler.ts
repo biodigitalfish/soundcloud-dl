@@ -2,7 +2,7 @@ import { Logger, LogLevel } from "./utils/logger";
 import { getConfigValue, storeConfigValue, loadConfigValue } from "./utils/config";
 import { sanitizeFilenameForDownload, concatArrayBuffers } from "./utils/download";
 import { SoundCloudApi, Track, StreamDetails } from "./soundcloudApi";
-import { ffmpeg, loadFFmpeg } from "./ffmpeg";
+import { requestRemux } from "./ffmpegManager";
 import { Mp3TagWriter } from "./tagWriters/mp3TagWriter";
 import { Mp4TagWriter } from "./tagWriters/mp4TagWriter";
 import { TagWriter } from "./tagWriters/tagWriter";
@@ -431,40 +431,37 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             const ffmpegRemuxEnabled = getConfigValue("ffmpeg-remux-hls-mp4");
             if (ffmpegRemuxEnabled && (data.fileExtension === "m4a" || data.fileExtension === "mp4")) {
                 reportProgress(85);
-                const ffmpegReady = await loadFFmpeg();
-                if (ffmpegReady) {
-                    const inputFilename = `input.${data.fileExtension || "mp4"}`;
-                    const outputFilename = `output_remuxed.${data.fileExtension || "mp4"}`;
-                    let progressHandlerFfmpeg: (({ progress }: { progress: number; }) => void) | undefined;
-                    try {
-                        await ffmpeg.writeFile(inputFilename, new Uint8Array(originalStreamBuffer.slice(0)));
-                        const ffmpegArgs = ["-loglevel", "warning", "-i", inputFilename, "-c", "copy", outputFilename];
-                        let lastReportedFFmpegProgress = -1;
-                        progressHandlerFfmpeg = ({ progress }: { progress: number }) => {
-                            const currentFFmpegProgress = Math.round(progress * 100);
-                            if (currentFFmpegProgress > lastReportedFFmpegProgress && currentFFmpegProgress <= 100) {
-                                reportProgress(85 + Math.floor(currentFFmpegProgress * 0.13));
-                                lastReportedFFmpegProgress = currentFFmpegProgress;
-                            }
-                        };
-                        ffmpeg.on("progress", progressHandlerFfmpeg);
-                        await ffmpeg.exec(ffmpegArgs);
-                        const outputData = await ffmpeg.readFile(outputFilename);
-                        if (typeof outputData === "string") throw new Error("FFmpeg remux output was a string");
-                        streamBuffer = outputData.buffer.slice(0);
-                        if (data.fileExtension === "m4a" || data.fileExtension === "mp4") determinedContentType = "audio/mp4";
-                        reportProgress(99);
-                        await ffmpeg.deleteFile(inputFilename);
-                        await ffmpeg.deleteFile(outputFilename);
-                    } catch (ffmpegError) {
-                        logger.logError("[FFMPEG_WASM] Error during remux. Proceeding with original.", ffmpegError);
-                        streamBuffer = originalStreamBuffer.slice(0);
-                    } finally {
-                        if (progressHandlerFfmpeg && typeof ffmpeg.off === "function") ffmpeg.off("progress", progressHandlerFfmpeg);
-                    }
-                } else {
-                    logger.logWarn("[FFMPEG_WASM] Remux skipped as FFmpeg failed to load.");
+
+                // Define a callback for FFMPEG's internal progress (0-100% for its own operation)
+                const handleFFmpegInternalProgress = (ffmpegInternalProgress: number) => {
+                    // Scale FFMPEG's 0-100% progress to fit within a smaller range of the overall progress,
+                    // for example, mapping it from 85% to 98% of the total download progress.
+                    // 13% of total progress is allocated to FFMPEG (98 - 85 = 13).
+                    const overallProgressUpdate = 85 + Math.floor(ffmpegInternalProgress * 0.13);
+                    reportProgress(overallProgressUpdate);
+                };
+
+                try {
+                    logger.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Sending remux task to FFmpegManager.`);
+                    // Use originalStreamBuffer, which should be the complete downloaded (possibly HLS-concatenated) buffer
+                    const remuxedBuffer = await requestRemux(
+                        data.trackId.toString(), // Ensure taskId is a string for the manager
+                        originalStreamBuffer,    // This is the buffer to be remuxed
+                        data.fileExtension || "mp4",
+                        handleFFmpegInternalProgress
+                    );
+                    streamBuffer = remuxedBuffer; // Update streamBuffer with the remuxed result
+                    if (data.fileExtension === "m4a" || data.fileExtension === "mp4") determinedContentType = "audio/mp4";
+                    reportProgress(99); // Indicate FFMPEG phase finished successfully
+                    logger.logInfo(`[DownloadHandler TrackId: ${data.trackId}] Remux task completed by FFmpegManager.`);
+                } catch (ffmpegError) {
+                    logger.logError(`[FFMPEG_MANAGER] Error during remux via manager. Proceeding with original. TrackId: ${data.trackId}`, ffmpegError);
+                    // Fallback to originalStreamBuffer if remuxing fails
+                    streamBuffer = originalStreamBuffer.slice(0); // Use a copy for safety
+                    // reportProgress still at 85 or whatever it was before failure if ffmpegError is caught
                 }
+            } else {
+                logger.logDebug(`[DownloadHandler TrackId: ${data.trackId}] FFmpeg remux skipped (disabled or not applicable filetype).`);
             }
         } catch (error) {
             logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during download/FFmpeg stage:`, error);

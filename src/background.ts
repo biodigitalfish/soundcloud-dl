@@ -13,6 +13,7 @@ import { loadConfiguration, storeConfigValue, getConfigValue, registerConfigChan
 import { handleIncomingMessage } from "./messageHandler";
 import { DownloadProgress } from "./types";
 import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientIdRule } from "./utils/browser";
+import { preInitializeFFmpegPool } from "./ffmpegManager";
 // --- Main TrackError class for background.ts specific errors ---
 export class TrackError extends Error {
   constructor(message: string, trackId?: number) {
@@ -59,6 +60,8 @@ loadConfiguration(true).then(async () => {
   if (initialOauthToken) {
     await oauthTokenChanged(initialOauthToken);
   }
+
+  preInitializeFFmpegPool();
 });
 
 // --- EXPORTED Utility Functions (used by messageHandler.ts) ---

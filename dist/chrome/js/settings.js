@@ -1,4 +1,4 @@
-import { f as storeConfigValue, m as eraseDownloadHistoryEntry, o as loadConfiguration, z as configKeys, d as getConfigValue, A as resetConfig } from "./config-Cbcs9AtA.js";
+import { f as storeConfigValue, m as eraseDownloadHistoryEntry, o as loadConfiguration, z as configKeys, a as getConfigValue, A as resetConfig } from "./config-CAI3Vpb8.js";
 import { L as Logger } from "./logger-DNjPuH99.js";
 const logger = Logger.create("Settings");
 async function resetSettings(e) {

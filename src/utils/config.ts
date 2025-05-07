@@ -42,6 +42,7 @@ export interface Config {
   "track-download-history": ConfigValue<Record<string, { filename: string; timestamp: number }>>;
   "ffmpeg-remux-hls-mp4": ConfigValue<boolean>;
   "debugLoggingEnabled": ConfigValue<boolean>;
+  "maxConcurrentTrackDownloads": ConfigValue<number>;
 }
 
 type OnConfigValueChangedType = (key: keyof Config, value: any) => void;
@@ -73,6 +74,7 @@ const config: Config = {
   "track-download-history": { defaultValue: {} },
   "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
   "debugLoggingEnabled": { defaultValue: false },
+  "maxConcurrentTrackDownloads": { sync: true, defaultValue: 3, sanitize: (value) => Math.max(1, Math.min(value, 10)) },
 };
 
 export const configKeys = Object.keys(config) as Array<keyof Config>;

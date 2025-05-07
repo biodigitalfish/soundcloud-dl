@@ -2805,7 +2805,8 @@ const config = {
   "hls-rate-limit-delay-ms": { sync: true, defaultValue: 200 },
   "track-download-history": { defaultValue: {} },
   "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
-  "debugLoggingEnabled": { defaultValue: false }
+  "debugLoggingEnabled": { defaultValue: false },
+  "maxConcurrentTrackDownloads": { sync: true, defaultValue: 3, sanitize: (value) => Math.max(1, Math.min(value, 10)) }
 };
 const configKeys = Object.keys(config);
 function isConfigKey(key) {
@@ -2903,10 +2904,10 @@ export {
   determineIfUrlIsSet as C,
   setOnConfigValueChanged as D,
   XRegExp as X,
-  commonjsGlobal as a,
-  getDefaultExportFromCjs as b,
+  getConfigValue as a,
+  commonjsGlobal as b,
   concatArrayBuffers as c,
-  getConfigValue as d,
+  getDefaultExportFromCjs as d,
   searchDownloads as e,
   storeConfigValue as f,
   getPathFromExtensionFile as g,
