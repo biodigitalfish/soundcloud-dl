@@ -1,11 +1,14 @@
 // content_loader.js
+import { Logger } from "./utils/logger";
+const logger = Logger.create("Content Loader");
+
 function getExtensionURL(relativePath) {
     if (typeof browser !== "undefined" && browser.runtime && browser.runtime.getURL) {
         return browser.runtime.getURL(relativePath);
     } else if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getURL) {
         return chrome.runtime.getURL(relativePath);
     }
-    console.error("SOUNDCLOUD-DL: Cannot get extension URL for path:", relativePath);
+    logger.error("SOUNDCLOUD-DL: Cannot get extension URL for path:", relativePath);
     return null;
 }
 
@@ -17,11 +20,11 @@ function getExtensionURL(relativePath) {
         try {
             // Dynamically import the module. The browser handles this as a module script.
             await import(src);
-            console.log("SOUNDCLOUD-DL: content.js module initiated via content_loader.js");
+            logger.logInfo("SOUNDCLOUD-DL: content.js module initiated via content_loader.js");
         } catch (e) {
-            console.error("SOUNDCLOUD-DL: Error dynamically importing content.js module at", src, e);
+            logger.error("SOUNDCLOUD-DL: Error dynamically importing content.js module at", src, e);
         }
     } else {
-        console.error("SOUNDCLOUD-DL: Could not resolve extension URL for content.js module.");
+        logger.error("SOUNDCLOUD-DL: Could not resolve extension URL for content.js module.");
     }
 })(); 

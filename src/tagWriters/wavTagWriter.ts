@@ -1,6 +1,8 @@
 import { TagWriter } from "./tagWriter";
 import { WaveFile } from "wavefile";
 import type { TagWriterOutput } from "./tagWriter";
+import { Logger } from "../utils/logger";
+const logger = Logger.create("Wav Tag Writer");
 
 export class WavTagWriter implements TagWriter {
   private wav: WaveFile;
@@ -72,7 +74,7 @@ export class WavTagWriter implements TagWriter {
 
     const rawBuffer = this.wav.toBuffer();
 
-    console.log({ tags: this.wav.listTags() });
+    logger.logInfo("Tags applied:", this.wav.listTags());
 
     return Promise.resolve({ buffer: rawBuffer.buffer, tagsApplied: true });
   }

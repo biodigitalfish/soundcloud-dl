@@ -69,6 +69,7 @@ export default defineConfig({
                 "js/background.js": path.resolve(__dirname, "src/background.ts"),
                 "js/settings.js": path.resolve(__dirname, "src/settings.ts"),     // Added settings script
                 "js/content.js": path.resolve(__dirname, "src/content.ts"),
+                "js/bridge-content-script.js": path.resolve(__dirname, "src/bridge-content-script.ts"), // Added bridge script
                 // "js/content_loader.js": path.resolve(__dirname, "src/content_loader.js"), // Removed from Vite build input, now handled by static copy
                 "js/repostBlocker.js": path.resolve(__dirname, "src/repostBlocker.ts")
             },

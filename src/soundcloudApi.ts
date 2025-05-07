@@ -97,7 +97,7 @@ export class SoundCloudApi {
   async getTracks(trackIds: number[]): Promise<KeyedTracks> {
     const url = `${this.baseUrl}/tracks?ids=${trackIds.join(",")}`;
 
-    this.logger.logInfo("Fetching tracks with Ids", { trackIds });
+    this.logger.infoInfo("Fetching tracks with Ids", { trackIds });
 
     const tracks = await this.fetchJson<Track>(url);
 
@@ -112,7 +112,7 @@ export class SoundCloudApi {
     const stream = await this.fetchJson<Stream>(url);
 
     if (!stream || !stream.url) {
-      this.logger.logError("Invalid stream response", stream);
+      this.logger.infoError("Invalid stream response", stream);
 
       return null;
     }
@@ -139,17 +139,17 @@ export class SoundCloudApi {
 
   async getOriginalDownloadUrl(id: number): Promise<string | null> {
     const url = `${this.baseUrl}/tracks/${id}/download`;
-    this.logger.logInfo("Getting original download URL for track with Id", id);
+    this.logger.infoInfo("Getting original download URL for track with Id", id);
 
     try {
       const downloadObj = await this.fetchJson<OriginalDownload>(url);
       if (!downloadObj || !downloadObj.redirectUri) {
-        this.logger.logError("Invalid original file response", downloadObj);
+        this.logger.infoError("Invalid original file response", downloadObj);
         return null;
       }
       return downloadObj.redirectUri;
     } catch (_error) {
-      this.logger.logError(`Failed to get original download URL for track ${id}`, _error);
+      this.logger.infoError(`Failed to get original download URL for track ${id}`, _error);
       return null;
     }
   }
@@ -169,11 +169,11 @@ export class SoundCloudApi {
 
       if (!response.ok) {
         if (response.status === 404) {
-          this.logger.logDebug(`[fetchArrayBuffer] Resource not found (404) for ${url}`);
+          this.logger.infoDebug(`[fetchArrayBuffer] Resource not found (404) for ${url}`);
           return [null, response.headers]; // Return null buffer, but valid headers
         }
         if (response.status === 429) {
-          this.logger.logWarn(`[fetchArrayBuffer] Rate limited (429) while fetching ${url}.`);
+          this.logger.infoWarn(`[fetchArrayBuffer] Rate limited (429) while fetching ${url}.`);
           throw new RateLimitError(`Rate limited (status 429) on ${url}`);
         }
         // For other non-OK statuses (5xx, 403, etc.)
@@ -183,7 +183,7 @@ export class SoundCloudApi {
 
       if (!response.body) {
         // This case should ideally not happen for a successful response, but good to guard.
-        this.logger.logError(`Response for ${url} has no body, despite response.ok being true.`);
+        this.logger.infoError(`Response for ${url} has no body, despite response.ok being true.`);
         throw new Error(`Response for ${url} has no body.`);
       }
 
@@ -227,7 +227,7 @@ export class SoundCloudApi {
 
       // Check for genuinely empty buffer after successful download, which might be an issue.
       if (loaded === 0 && response.status === 200) {
-        this.logger.logWarn(`[fetchArrayBuffer] Fetched ${url} (Status: ${response.status}) but received an empty (0 bytes) buffer.`);
+        this.logger.infoWarn(`[fetchArrayBuffer] Fetched ${url} (Status: ${response.status}) but received an empty (0 bytes) buffer.`);
         // Decide if this should be an error or return [null, headers]
         // For now, returning the empty buffer as it is technically what was received.
       }
@@ -235,7 +235,7 @@ export class SoundCloudApi {
       return [completeBuffer, response.headers];
 
     } catch (error) {
-      this.logger.logError(`[fetchArrayBuffer] Generic error for ${url}:`, error);
+      this.logger.infoError(`[fetchArrayBuffer] Generic error for ${url}:`, error);
       // To keep original behavior of throwing specific RateLimitError or generic Error:
       if (error instanceof RateLimitError) {
         throw error;
@@ -252,11 +252,11 @@ export class SoundCloudApi {
       if (!resp.ok) {
         if (resp.status === 429) {
           const errorMsg = `Rate limited while fetching from ${url}. Please wait and try again later.`;
-          this.logger.logWarn(errorMsg);
+          this.logger.infoWarn(errorMsg);
           throw new RateLimitError(errorMsg);
         } else {
           const errorMsg = `HTTP error ${resp.status} while fetching from ${url}`;
-          this.logger.logError(errorMsg);
+          this.logger.infoError(errorMsg);
           throw new Error(errorMsg);
         }
       }
@@ -267,7 +267,7 @@ export class SoundCloudApi {
 
       return json;
     } catch (error) {
-      this.logger.logError("Failed to fetch JSON from", url);
+      this.logger.infoError("Failed to fetch JSON from", url);
 
       return null;
     }

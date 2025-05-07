@@ -3,6 +3,8 @@ import { revokeURL } from "./utils/browser";
 
 const logger = Logger.create("Compatibility Stubs");
 
+const SCRIPT_ID = "soundcloud-dl-bridge"; // Same ID as in bridge-content-script.ts
+
 // Define minimal interfaces for compatibility
 interface MinimalTab {
   id?: number;
@@ -18,7 +20,8 @@ interface MinimalMessageSender {
 
 type AsyncMessageCallback = (message: any, sender: MinimalMessageSender) => Promise<any>;
 
-export const onMessage = (callback: AsyncMessageCallback) => {
+// Keep the old onMessage for non-page contexts, rename it slightly
+const originalRuntimeOnMessage = (callback: AsyncMessageCallback) => {
   if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
     browser.runtime.onMessage.addListener((message: any, sender: browser.runtime.MessageSender) => {
       if (sender.id !== browser.runtime.id || !message) {
@@ -26,7 +29,7 @@ export const onMessage = (callback: AsyncMessageCallback) => {
       }
       return callback(message, sender as MinimalMessageSender)
         .catch(err => {
-          logger.logError("Error in onMessage callback (Firefox):", err);
+          logger.logError("Error in originalRuntimeOnMessage callback (Firefox):", err);
           return Promise.reject({ error: (err as Error)?.message || "Unknown error in callback" });
         });
     });
@@ -36,20 +39,80 @@ export const onMessage = (callback: AsyncMessageCallback) => {
         sendResponse({ error: "Invalid message or sender from extension" });
         return false;
       }
-
       callback(message, sender as MinimalMessageSender)
-        .then(responsePayload => {
-          sendResponse(responsePayload);
-        })
+        .then(responsePayload => sendResponse(responsePayload))
         .catch(err => {
-          logger.logError("Error in onMessage callback (Chrome), responding with error:", err);
+          logger.logError("Error in originalRuntimeOnMessage callback (Chrome), responding with error:", err);
           sendResponse({ error: (err as Error)?.message || "Unknown error in callback" });
         });
-
       return true;
     });
   } else {
-    logger.logError("Browser does not support runtime.onMessage");
+    // This case should ideally not be hit if context detection is right for the new onMessage
+    logger.logError("[CompatibilityStubs] originalRuntimeOnMessage: Browser does not support runtime.onMessage");
+  }
+};
+
+// New onMessage that delegates or uses window.postMessage
+export const onMessage = (callback: AsyncMessageCallback) => {
+  const isPageContext = typeof chrome === "undefined" || typeof chrome.runtime === "undefined" || typeof chrome.runtime.id === "undefined";
+
+  if (isPageContext && typeof window !== "undefined") {
+    logger.logDebug("[CompatibilityStubs] onMessage: Setting up window.addEventListener for page context.");
+    window.addEventListener("message", (event: MessageEvent) => {
+      let eventDataString = "<No Data>";
+      let dataDirection = "<No Direction Property>";
+      let dataSource = "<No Source Property>";
+      try {
+        if (event.data) {
+          eventDataString = JSON.stringify(event.data);
+          if (typeof event.data.direction === "string") dataDirection = event.data.direction;
+          if (typeof event.data.source === "string") dataSource = event.data.source;
+        }
+      } catch { eventDataString = "<Error Stringifying Data>"; }
+
+      logger.logInfo(`[CompatStubs Listener Raw Detail] Received window message: sourceIsWindow=${event.source === window}, event.data.source='${dataSource}', SCRIPT_ID='${SCRIPT_ID}', event.data.direction='${dataDirection}', expectedDirection='from-background-via-bridge', FullData=${eventDataString}`);
+
+      const cond1 = event.source === window;
+      const cond2 = !!event.data;
+      let cond3 = false;
+      let cond4 = false;
+      let actualEventDataSource = "<event.data was null>";
+      let actualEventDataDirection = "<event.data was null>";
+
+      if (cond2) { // only check event.data.source if event.data exists
+        actualEventDataSource = event.data.source;
+        actualEventDataDirection = event.data.direction;
+        cond3 = event.data.source === SCRIPT_ID;
+        cond4 = event.data.direction === "from-background-via-bridge";
+      }
+
+      logger.logInfo(`[CompatStubs EVAL CHECK] cond1 (event.source === window): ${cond1}`);
+      logger.logInfo(`[CompatStubs EVAL CHECK] cond2 (!!event.data): ${cond2}`);
+      logger.logInfo(`[CompatStubs EVAL CHECK] cond3 (event.data.source === SCRIPT_ID): ${cond3} (event.data?.source: '${actualEventDataSource}', SCRIPT_ID: '${SCRIPT_ID}')`);
+      logger.logInfo(`[CompatStubs EVAL CHECK] cond4 (event.data.direction === "from-background-via-bridge"): ${cond4} (event.data?.direction: '${actualEventDataDirection}')`);
+      logger.logInfo(`[CompatStubs EVAL CHECK] Full event.data for this check: ${eventDataString}`);
+
+
+      if (
+        cond1 && cond2 && cond3 && cond4
+      ) {
+        // Use logger.logDebug - it handles the check internally
+        logger.logDebug(">>> COMPATIBILITY STUBS: PAGE CONTEXT LISTENER: PASSED ALL FILTERS! <<< Payload:", JSON.stringify(event.data.payload));
+
+        const simulatedSender: MinimalMessageSender = { id: (typeof chrome !== "undefined" && chrome.runtime) ? chrome.runtime.id : undefined }; // Ensure id can be undefined safely
+
+        // Execute the callback, but don't automatically send its response back
+        callback(event.data.payload, simulatedSender)
+          .catch(err => logger.logError("Error in onMessage callback (page context):", err));
+      } else {
+        // This new else block will help understand why the condition failed, if it does.
+        logger.logWarn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
+      }
+    });
+  } else {
+    logger.logDebug("[CompatibilityStubs] onMessage: Using original runtime.onMessage for extension context.");
+    originalRuntimeOnMessage(callback); // Call the old logic for background/popup/isolated content scripts
   }
 };
 
@@ -169,19 +232,66 @@ export const downloadToFile = (url: string, filename: string, saveAs: boolean): 
 };
 
 export const sendMessageToBackend = (message: any): Promise<any> => {
-  if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
+  // Heuristic: If chrome.runtime.id is not available, we are likely in page context.
+  // Or, if window object exists and this isn't a service worker context (where window is undefined).
+  const isPageContext = typeof chrome === "undefined" || typeof chrome.runtime === "undefined" || typeof chrome.runtime.id === "undefined";
+
+  if (isPageContext && typeof window !== "undefined") {
+    logger.logDebug("[CompatibilityStubs] sendMessageToBackend: Using window.postMessage via bridge.", message);
+    return new Promise((resolve, reject) => {
+      const messageId = crypto.randomUUID(); // To correlate responses
+      const messageToSend = {
+        source: SCRIPT_ID,
+        direction: "to-background-via-bridge",
+        payload: message,
+        messageId: messageId
+      };
+
+      const responseListener = (event: MessageEvent) => {
+        if (
+          event.source === window &&
+          event.data &&
+          event.data.source === SCRIPT_ID &&
+          event.data.direction === "from-background-via-bridge" &&
+          event.data.payload &&
+          event.data.messageId === messageId // Check if this response is for our message
+        ) {
+          window.removeEventListener("message", responseListener);
+          if (event.data.payload.error) {
+            logger.logWarn("[CompatibilityStubs] Error response from bridge:", event.data.payload.error);
+            reject(new Error(event.data.payload.error));
+          } else {
+            resolve(event.data.payload);
+          }
+        }
+      };
+
+      window.addEventListener("message", responseListener);
+      window.postMessage(messageToSend, "*");
+
+      // Timeout for the response
+      setTimeout(() => {
+        window.removeEventListener("message", responseListener);
+        reject(new Error("Timeout waiting for response from bridge for sendMessageToBackend"));
+      }, 15000); // 15-second timeout
+    });
+  } else if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
+    logger.logDebug("[CompatibilityStubs] sendMessageToBackend: Using browser.runtime.sendMessage.", message);
     return browser.runtime.sendMessage(message);
   } else if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+    logger.logDebug("[CompatibilityStubs] sendMessageToBackend: Using chrome.runtime.sendMessage.", message);
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
+          logger.logError("[CompatibilityStubs] sendMessageToBackend lastError:", chrome.runtime.lastError);
           return reject(chrome.runtime.lastError);
         }
         resolve(response);
       });
     });
   } else {
-    return Promise.reject("Browser does not support runtime.sendMessage");
+    logger.logError("[CompatibilityStubs] sendMessageToBackend: Browser does not support runtime.sendMessage and not in page context for bridge.");
+    return Promise.reject(new Error("Browser does not support runtime.sendMessage"));
   }
 };
 

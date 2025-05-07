@@ -1,4 +1,6 @@
 import { Config } from "./utils/config";
+import { Logger } from "./utils/logger";
+const logger = Logger.create("Repost Blocker");
 
 function isStreamUrl(url: URL) {
   return url && url.hostname === "api-v2.soundcloud.com" && url.pathname === "/stream";
@@ -93,7 +95,7 @@ function hijackedSendMethod(body: any) {
       }
     }
   } catch (error) {
-    console.error("Error in hijackedSendMethod:", error);
+    logger.logError("Error in hijackedSendMethod:", error);
   }
 
   return originalSendMethod.call(this, body);

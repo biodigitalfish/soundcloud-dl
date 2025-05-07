@@ -1,4 +1,4 @@
-import { L as Logger, a as LogLevel, g as getPathFromExtensionFile, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, d as getDefaultExportFromCjs, e as getConfigValue, s as sanitizeFilenameForDownload, l as loadConfigValue, f as searchDownloads, h as storeConfigValue, i as isServiceWorkerContext, j as createURLFromBlob, k as downloadToFile, m as sendMessageToTab, n as eraseDownloadHistoryEntry, o as getExtensionManifest, p as loadConfiguration, q as onMessage, r as onBeforeSendHeaders, t as onBeforeRequest, u as onPageActionClicked, v as registerConfigChangeHandler, w as setAuthHeaderRule, x as setClientIdRule, y as usesDeclarativeNetRequestForModification, z as openOptionsPage } from "./config-CMpOYocD.js";
+import { L as Logger, a as LogLevel, g as getPathFromExtensionFile, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, d as getDefaultExportFromCjs, e as getConfigValue, s as sanitizeFilenameForDownload, l as loadConfigValue, f as searchDownloads, h as storeConfigValue, i as isServiceWorkerContext, j as createURLFromBlob, k as downloadToFile, m as sendMessageToTab, n as eraseDownloadHistoryEntry, o as getExtensionManifest, p as loadConfiguration, q as onMessage, r as onBeforeSendHeaders, t as onBeforeRequest, u as onPageActionClicked, v as registerConfigChangeHandler, w as setAuthHeaderRule, x as setClientIdRule, y as usesDeclarativeNetRequestForModification, z as openOptionsPage } from "./config-AZhmjXjk.js";
 class RateLimitError extends Error {
   constructor(message) {
     super(message);
@@ -3758,75 +3758,61 @@ async function handleIncomingMessage(message, sender) {
       if (!track) {
         throw new MessageHandlerError(`Failed to resolve SoundCloud track URL: ${url}`);
       }
-      let browserDlId;
-      const reportTrackProgress = (progress, browserDlIdFromCallback) => {
-        logger$1.logDebug(`[MessageHandler] reportTrackProgress (for downloadId ${downloadId}) CALLED WITH: progress=${progress}, browserDlIdFromCallback=${browserDlIdFromCallback}`);
-        sendDownloadProgress(tabId, downloadId, progress, void 0, void 0, browserDlIdFromCallback);
-      };
-      const forceRedownload = message.forceRedownload === true;
-      let originalHistoryValue = null;
-      let originalSkipSetting = void 0;
-      if (forceRedownload) {
-        logger$1.logInfo(`Force redownload requested for track ID ${track.id}. Temporarily bypassing all history and skip checks.`);
-        originalSkipSetting = getConfigValue("skipExistingFiles");
-        if (originalSkipSetting) {
-          logger$1.logInfo("Temporarily disabling skipExistingFiles for force redownload");
-          await storeConfigValue("skipExistingFiles", false);
-        }
-        const trackIdKey = `track-${track.id}`;
-        const trackDownloadHistory = await loadConfigValue("track-download-history") || {};
-        if (trackDownloadHistory && trackDownloadHistory[trackIdKey]) {
-          originalHistoryValue = { ...trackDownloadHistory[trackIdKey] };
-          delete trackDownloadHistory[trackIdKey];
-          await storeConfigValue("track-download-history", trackDownloadHistory);
-          logger$1.logInfo(`Temporarily removed track ${track.id} from download history for force redownload.`);
-        }
+      const immediateResponse = { success: true, message: "Track resolved, download initiated.", originalDownloadId: downloadId };
+      logger$1.logInfo(`[MessageHandler] Preparing IMMEDIATE response for ${downloadId} to content script.`);
+      (async () => {
+        let originalSkipSetting = void 0;
         try {
-          const extractor = new MetadataExtractor(track.title, track.user.username, track.user.permalink);
-          const normalizedTitle = extractor.getTitle();
-          const artistList = extractor.getArtists();
-          const normalizedArtist = artistList.map((a2) => a2.name).join(", ");
-          const filenamePattern = `${normalizedArtist} - ${normalizedTitle}`;
-          const escapedPattern = filenamePattern.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
-          const regexPattern = escapedPattern + "\\..+$";
-          eraseDownloadHistoryEntry(regexPattern);
-        } catch (error) {
-          logger$1.logError("Force redownload: Failed to erase matching entries from browser download history:", error);
-        }
-      }
-      try {
-        const actualBrowserDownloadId = await downloadTrack(track, void 0, void 0, void 0, reportTrackProgress);
-        logger$1.logInfo(`Track download process finished by downloadTrack. Reported browser download ID: ${actualBrowserDownloadId}`);
-        browserDlId = actualBrowserDownloadId;
-        if (forceRedownload && originalSkipSetting !== void 0) {
-          logger$1.logInfo("Restoring skipExistingFiles setting after force redownload");
-          await storeConfigValue("skipExistingFiles", originalSkipSetting);
-        }
-        return {
-          success: true,
-          message: forceRedownload ? "Track force-redownloaded" : "Track download processing initiated and final status sent via progress",
-          browserDownloadId: actualBrowserDownloadId,
-          // Keep this for potential logging or if content script uses it from here
-          originalDownloadId: downloadId
-        };
-      } catch (error) {
-        if (forceRedownload) {
-          if (originalSkipSetting !== void 0) {
-            logger$1.logInfo("Restoring skipExistingFiles setting after failed force redownload");
-            await storeConfigValue("skipExistingFiles", originalSkipSetting);
-          }
-          if (originalHistoryValue) {
+          const reportTrackProgress = (progress, browserDlIdFromCallback) => {
+            logger$1.logDebug(`[MessageHandler ASYNC] reportTrackProgress (for downloadId ${downloadId}) CALLED WITH: progress=${progress}, browserDlIdFromCallback=${browserDlIdFromCallback}`);
+            sendDownloadProgress(tabId, downloadId, progress, void 0, void 0, browserDlIdFromCallback);
+          };
+          const forceRedownload = message.forceRedownload === true;
+          if (forceRedownload) {
+            logger$1.logInfo(`Force redownload requested for track ID ${track.id}. Temporarily bypassing all history and skip checks.`);
+            originalSkipSetting = getConfigValue("skipExistingFiles");
+            if (originalSkipSetting) {
+              logger$1.logInfo("Temporarily disabling skipExistingFiles for force redownload");
+              await storeConfigValue("skipExistingFiles", false);
+            }
             const trackIdKey = `track-${track.id}`;
             const trackDownloadHistory = await loadConfigValue("track-download-history") || {};
-            trackDownloadHistory[trackIdKey] = originalHistoryValue;
-            await storeConfigValue("track-download-history", trackDownloadHistory);
-            logger$1.logInfo(`Restored original download history for track ${track.id} after failed force redownload.`);
+            if (trackDownloadHistory && trackDownloadHistory[trackIdKey]) {
+              delete trackDownloadHistory[trackIdKey];
+              await storeConfigValue("track-download-history", trackDownloadHistory);
+              logger$1.logInfo(`Temporarily removed track ${track.id} from download history for force redownload.`);
+            }
+            try {
+              const extractor = new MetadataExtractor(track.title, track.user.username, track.user.permalink);
+              const normalizedTitle = extractor.getTitle();
+              const artistList = extractor.getArtists();
+              const normalizedArtist = artistList.map((a2) => a2.name).join(", ");
+              const filenamePattern = `${normalizedArtist} - ${normalizedTitle}`;
+              const escapedPattern = filenamePattern.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
+              const regexPattern = escapedPattern + "\\..+$";
+              eraseDownloadHistoryEntry(regexPattern);
+            } catch (error) {
+              logger$1.logError("Force redownload: Failed to erase matching entries from browser download history:", error);
+            }
           }
+          logger$1.logInfo(`[MessageHandler ASYNC] Starting downloadTrack for ${downloadId}`);
+          downloadTrack(track, void 0, void 0, void 0, reportTrackProgress).then((actualBrowserDownloadId) => {
+            logger$1.logInfo(`[MessageHandler ASYNC] Track download process for ${downloadId} finished by downloadTrack. Reported browser download ID: ${actualBrowserDownloadId}`);
+          }).catch((downloadError) => {
+            logger$1.logError(`[MessageHandler ASYNC] Error during downloadTrack execution for ${downloadId}:`, downloadError);
+            sendDownloadProgress(tabId, downloadId, void 0, downloadError);
+          }).finally(() => {
+            if (forceRedownload && originalSkipSetting !== void 0) {
+              logger$1.logInfo(`Restoring skipExistingFiles setting to ${originalSkipSetting} after force redownload for ${track.id}`);
+              storeConfigValue("skipExistingFiles", originalSkipSetting);
+            }
+          });
+        } catch (asyncError) {
+          logger$1.logError(`[MessageHandler ASYNC] Error setting up async download task for ${downloadId}:`, asyncError);
+          sendDownloadProgress(tabId, downloadId, void 0, asyncError);
         }
-        logger$1.logError(`Track download failed: ${error instanceof Error ? error.message : String(error)}`);
-        sendDownloadProgress(tabId, downloadId, 102, error instanceof Error ? error : new MessageHandlerError(String(error)));
-        return { error: `Track download failed: ${error instanceof Error ? error.message : String(error)}` };
-      }
+      })();
+      return immediateResponse;
     } else if (type === DOWNLOAD_SET_RANGE) {
       const rangeMessage = message;
       logger$1.logInfo("Received set range download request", {

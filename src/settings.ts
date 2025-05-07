@@ -7,7 +7,7 @@ const logger = Logger.create("Settings");
 async function resetSettings(e: Event) {
   e.preventDefault();
 
-  logger.logInfo("Resetting settings...");
+  logger.infoInfo("Resetting settings...");
 
   await resetConfig();
 
@@ -17,7 +17,7 @@ async function resetSettings(e: Event) {
 async function saveSettings(e: Event) {
   e.preventDefault();
 
-  logger.logInfo("Saving settings...");
+  logger.infoInfo("Saving settings...");
 
   const savePromises = [];
   for (const configKey of configKeys) {
@@ -32,7 +32,7 @@ async function saveSettings(e: Event) {
     } else if (elem.type === "number") {
       value = elem.valueAsNumber;
       if (isNaN(value)) {
-        logger.logWarn(`Invalid number input for ${configKey}, skipping save.`);
+        logger.infoWarn(`Invalid number input for ${configKey}, skipping save.`);
         continue;
       }
     } else {
@@ -57,11 +57,11 @@ async function saveSettings(e: Event) {
 }
 
 async function restoreSettings() {
-  logger.logInfo("Restoring settings...");
+  logger.infoInfo("Restoring settings...");
 
   try {
     await loadConfiguration();
-    logger.logInfo("Configuration loaded.");
+    logger.infoInfo("Configuration loaded.");
 
     for (const configKey of configKeys) {
       const elem = document.querySelector<HTMLInputElement>(`#${configKey}`);
@@ -69,7 +69,7 @@ async function restoreSettings() {
       if (elem === null) continue;
 
       const value = getConfigValue(configKey);
-      logger.logInfo(`Restoring key: ${configKey}, Value: ${JSON.stringify(value)} (Type: ${typeof value})`);
+      logger.infoInfo(`Restoring key: ${configKey}, Value: ${JSON.stringify(value)} (Type: ${typeof value})`);
 
       if (typeof value === "boolean") {
         elem.checked = value;
@@ -78,7 +78,7 @@ async function restoreSettings() {
       } else if (typeof value === "string") {
         elem.value = value;
       } else {
-        logger.logWarn(`Unexpected type for config key ${configKey}: ${typeof value}`);
+        logger.infoWarn(`Unexpected type for config key ${configKey}: ${typeof value}`);
         if (elem.type === "checkbox") elem.checked = false;
         else elem.value = "";
       }
@@ -87,7 +87,7 @@ async function restoreSettings() {
       elem.dispatchEvent(changeEvent);
     }
   } catch (error) {
-    logger.logError("Failed to restore settings!", error);
+    logger.infoError("Failed to restore settings!", error);
   }
 }
 
@@ -118,14 +118,14 @@ enableHlsRateLimitingElem.onchange = (event: any) => {
 const clearHistoryButton = document.querySelector<HTMLButtonElement>("#clear-download-history");
 
 async function clearDownloadHistory() {
-  logger.logInfo("Clearing download history...");
+  logger.infoInfo("Clearing download history...");
 
   try {
     // First, clear our internal history database
     await storeConfigValue("track-download-history", {});
 
     // Now try to clear entries from Chrome's download history database
-    logger.logInfo("Attempting to clear browser download history for SoundCloud files...");
+    logger.infoInfo("Attempting to clear browser download history for SoundCloud files...");
     // Option 1: Try to clear all .mp3/.m4a files from SoundCloud 
     const soundcloudRegexPattern = "SoundCloud.*\\.(mp3|m4a|wav)$";
     eraseDownloadHistoryEntry(soundcloudRegexPattern);
@@ -142,7 +142,7 @@ async function clearDownloadHistory() {
       clearHistoryButton.disabled = false;
     }, 2000); // Keep disabled for 2 seconds
   } catch (error) {
-    logger.logError("Failed to clear download history", error);
+    logger.infoError("Failed to clear download history", error);
     clearHistoryButton.textContent = "Error! See Console";
     clearHistoryButton.style.backgroundColor = "#d30029";
     setTimeout(() => {

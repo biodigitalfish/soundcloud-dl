@@ -41,6 +41,7 @@ export interface Config {
   "hls-rate-limit-delay-ms": ConfigValue<number>;
   "track-download-history": ConfigValue<Record<string, { filename: string; timestamp: number }>>;
   "ffmpeg-remux-hls-mp4": ConfigValue<boolean>;
+  "debugLoggingEnabled": ConfigValue<boolean>;
 }
 
 type OnConfigValueChangedType = (key: keyof Config, value: any) => void;
@@ -71,6 +72,7 @@ const config: Config = {
   "hls-rate-limit-delay-ms": { sync: true, defaultValue: 200 },
   "track-download-history": { defaultValue: {} },
   "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
+  "debugLoggingEnabled": { defaultValue: false },
 };
 
 export const configKeys = Object.keys(config) as Array<keyof Config>;
@@ -92,7 +94,7 @@ export async function storeConfigValue<TKey extends keyof Config>(key: TKey, val
     value = entry.sanitize(value as never);
   }
 
-  logger.logInfo("Setting", key, "to", getDisplayValue(value, entry));
+  logger.infoInfo("Setting", key, "to", getDisplayValue(value, entry));
 
   entry.value = value;
 
@@ -107,7 +109,7 @@ export async function storeConfigValue<TKey extends keyof Config>(key: TKey, val
   } catch (_error) {
     const reason = "Failed to store configuration value";
 
-    logger.logError(reason, { key, value, sync });
+    logger.infoError(reason, { key, value, sync });
 
     return Promise.reject(reason);
   }
@@ -163,7 +165,7 @@ export async function resetConfig() {
 
 export function getConfigValue<TKey extends keyof Config>(key: TKey): Config[TKey]["value"] {
   if (!config[key]) {
-    logger.logError(`[getConfigValue] Attempted to access config key '${key}' but it was undefined in the config object!`);
+    logger.infoError(`[getConfigValue] Attempted to access config key '${key}' but it was undefined in the config object!`);
     throw new Error(`Config key '${key}' is missing from the config object.`);
   }
   return config[key].value;
@@ -188,11 +190,11 @@ const handleStorageChanged = (changes: { [key: string]: StorageChange }, areanam
 
     // --- DEBUG START ---
     if (key === "track-download-history") {
-      logger.logDebug(`[handleStorageChanged] Received update for ${key}. New value:`, newValue);
+      logger.infoDebug(`[handleStorageChanged] Received update for ${key}. New value:`, newValue);
     }
     // --- DEBUG END ---
 
-    if (areaname !== "local") logger.logInfo("Remote updating", key, "to", getDisplayValue(newValue, entry));
+    if (areaname !== "local") logger.infoInfo("Remote updating", key, "to", getDisplayValue(newValue, entry));
 
     entry.value = newValue;
 

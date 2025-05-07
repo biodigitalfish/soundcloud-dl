@@ -214,14 +214,15 @@ function determineIfUrlIsSet(url, initialIsSet) {
   return finalIsSet;
 }
 const logger$1 = Logger.create("Compatibility Stubs");
-const onMessage = (callback) => {
+const SCRIPT_ID = "soundcloud-dl-bridge";
+const originalRuntimeOnMessage = (callback) => {
   if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
     browser.runtime.onMessage.addListener((message, sender) => {
       if (sender.id !== browser.runtime.id || !message) {
         return Promise.resolve({ error: "Invalid message or sender from extension" });
       }
       return callback(message, sender).catch((err) => {
-        logger$1.logError("Error in onMessage callback (Firefox):", err);
+        logger$1.logError("Error in originalRuntimeOnMessage callback (Firefox):", err);
         return Promise.reject({ error: err?.message || "Unknown error in callback" });
       });
     });
@@ -231,16 +232,62 @@ const onMessage = (callback) => {
         sendResponse({ error: "Invalid message or sender from extension" });
         return false;
       }
-      callback(message, sender).then((responsePayload) => {
-        sendResponse(responsePayload);
-      }).catch((err) => {
-        logger$1.logError("Error in onMessage callback (Chrome), responding with error:", err);
+      callback(message, sender).then((responsePayload) => sendResponse(responsePayload)).catch((err) => {
+        logger$1.logError("Error in originalRuntimeOnMessage callback (Chrome), responding with error:", err);
         sendResponse({ error: err?.message || "Unknown error in callback" });
       });
       return true;
     });
   } else {
-    logger$1.logError("Browser does not support runtime.onMessage");
+    logger$1.logError("[CompatibilityStubs] originalRuntimeOnMessage: Browser does not support runtime.onMessage");
+  }
+};
+const onMessage = (callback) => {
+  const isPageContext = typeof chrome === "undefined" || typeof chrome.runtime === "undefined" || typeof chrome.runtime.id === "undefined";
+  if (isPageContext && typeof window !== "undefined") {
+    logger$1.logDebug("[CompatibilityStubs] onMessage: Setting up window.addEventListener for page context.");
+    window.addEventListener("message", (event) => {
+      let eventDataString = "<No Data>";
+      let dataDirection = "<No Direction Property>";
+      let dataSource = "<No Source Property>";
+      try {
+        if (event.data) {
+          eventDataString = JSON.stringify(event.data);
+          if (typeof event.data.direction === "string") dataDirection = event.data.direction;
+          if (typeof event.data.source === "string") dataSource = event.data.source;
+        }
+      } catch {
+        eventDataString = "<Error Stringifying Data>";
+      }
+      console.log(`[CompatStubs Listener Raw Detail] Received window message: sourceIsWindow=${event.source === window}, event.data.source='${dataSource}', SCRIPT_ID='${SCRIPT_ID}', event.data.direction='${dataDirection}', expectedDirection='from-background-via-bridge', FullData=${eventDataString}`);
+      const cond1 = event.source === window;
+      const cond2 = !!event.data;
+      let cond3 = false;
+      let cond4 = false;
+      let actualEventDataSource = "<event.data was null>";
+      let actualEventDataDirection = "<event.data was null>";
+      if (cond2) {
+        actualEventDataSource = event.data.source;
+        actualEventDataDirection = event.data.direction;
+        cond3 = event.data.source === SCRIPT_ID;
+        cond4 = event.data.direction === "from-background-via-bridge";
+      }
+      console.log(`[CompatStubs EVAL CHECK] cond1 (event.source === window): ${cond1}`);
+      console.log(`[CompatStubs EVAL CHECK] cond2 (!!event.data): ${cond2}`);
+      console.log(`[CompatStubs EVAL CHECK] cond3 (event.data.source === SCRIPT_ID): ${cond3} (event.data?.source: '${actualEventDataSource}', SCRIPT_ID: '${SCRIPT_ID}')`);
+      console.log(`[CompatStubs EVAL CHECK] cond4 (event.data.direction === "from-background-via-bridge"): ${cond4} (event.data?.direction: '${actualEventDataDirection}')`);
+      console.log(`[CompatStubs EVAL CHECK] Full event.data for this check: ${eventDataString}`);
+      if (cond1 && cond2 && cond3 && cond4) {
+        console.debug(">>> COMPATIBILITY STUBS: PAGE CONTEXT LISTENER: PASSED ALL FILTERS! <<< Payload:", JSON.stringify(event.data.payload));
+        const simulatedSender = { id: typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.id : void 0 };
+        callback(event.data.payload, simulatedSender).catch((err) => logger$1.logError("Error in onMessage callback (page context):", err));
+      } else {
+        console.warn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
+      }
+    });
+  } else {
+    logger$1.logDebug("[CompatibilityStubs] onMessage: Using original runtime.onMessage for extension context.");
+    originalRuntimeOnMessage(callback);
   }
 };
 const onBeforeSendHeaders = (callback, urls, extraInfos) => {
@@ -349,19 +396,52 @@ const downloadToFile = (url, filename, saveAs) => {
   });
 };
 const sendMessageToBackend = (message) => {
-  if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
+  const isPageContext = typeof chrome === "undefined" || typeof chrome.runtime === "undefined" || typeof chrome.runtime.id === "undefined";
+  if (isPageContext && typeof window !== "undefined") {
+    logger$1.logDebug("[CompatibilityStubs] sendMessageToBackend: Using window.postMessage via bridge.", message);
+    return new Promise((resolve, reject) => {
+      const messageId = crypto.randomUUID();
+      const messageToSend = {
+        source: SCRIPT_ID,
+        direction: "to-background-via-bridge",
+        payload: message,
+        messageId
+      };
+      const responseListener = (event) => {
+        if (event.source === window && event.data && event.data.source === SCRIPT_ID && event.data.direction === "from-background-via-bridge" && event.data.payload && event.data.messageId === messageId) {
+          window.removeEventListener("message", responseListener);
+          if (event.data.payload.error) {
+            logger$1.logWarn("[CompatibilityStubs] Error response from bridge:", event.data.payload.error);
+            reject(new Error(event.data.payload.error));
+          } else {
+            resolve(event.data.payload);
+          }
+        }
+      };
+      window.addEventListener("message", responseListener);
+      window.postMessage(messageToSend, "*");
+      setTimeout(() => {
+        window.removeEventListener("message", responseListener);
+        reject(new Error("Timeout waiting for response from bridge for sendMessageToBackend"));
+      }, 15e3);
+    });
+  } else if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
+    logger$1.logDebug("[CompatibilityStubs] sendMessageToBackend: Using browser.runtime.sendMessage.", message);
     return browser.runtime.sendMessage(message);
   } else if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+    logger$1.logDebug("[CompatibilityStubs] sendMessageToBackend: Using chrome.runtime.sendMessage.", message);
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
+          logger$1.logError("[CompatibilityStubs] sendMessageToBackend lastError:", chrome.runtime.lastError);
           return reject(chrome.runtime.lastError);
         }
         resolve(response);
       });
     });
   } else {
-    return Promise.reject("Browser does not support runtime.sendMessage");
+    logger$1.logError("[CompatibilityStubs] sendMessageToBackend: Browser does not support runtime.sendMessage and not in page context for bridge.");
+    return Promise.reject(new Error("Browser does not support runtime.sendMessage"));
   }
 };
 const sendMessageToTab = (tabId, message) => {
