@@ -61,7 +61,7 @@ export class Logger {
     this.log(LogLevel.Error, message, ...args);
   }
 
-  static create(name: string, minLogLevel: LogLevel = LogLevel.Information) {
+  static create(name: string, minLogLevel: LogLevel = LogLevel.Warning) {
     return new Logger(name, minLogLevel);
   }
 }

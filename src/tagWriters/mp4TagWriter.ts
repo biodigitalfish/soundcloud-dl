@@ -40,7 +40,7 @@ class Mp4 {
   private _logError(message: string): void {
     // Only log each unique error message once
     if (!this._loggedErrors.has(message)) {
-      this._logger.infoDebug(`MP4 metadata: ${message}`); // Using logDebug instead of logError
+      this._logger.logDebug(`MP4 metadata: ${message}`); // Using logDebug instead of logError
       this._loggedErrors.add(message);
     }
   }
@@ -54,7 +54,7 @@ class Mp4 {
   parse() {
     if (!this._buffer) throw new Error("Buffer can not be null");
     if (this._atoms.length > 0) throw new Error("Buffer already parsed");
-    this._logger.infoDebug("Starting MP4 parse..."); // Add start marker
+    this._logger.logDebug("Starting MP4 parse..."); // Add start marker
 
     let offset = 0;
     let atom: Atom;
@@ -65,30 +65,30 @@ class Mp4 {
 
       if (!atom || atom.length < 1 || offset >= this._buffer.byteLength) { // Add buffer boundary check
         if (offset < this._buffer.byteLength) {
-          this._logger.infoDebug(`Parsing stopped: _readAtom returned invalid atom or zero length at offset ${offset}.`);
+          this._logger.logDebug(`Parsing stopped: _readAtom returned invalid atom or zero length at offset ${offset}.`);
         } else {
-          this._logger.infoDebug(`Parsing stopped: Reached end of buffer at offset ${offset}.`);
+          this._logger.logDebug(`Parsing stopped: Reached end of buffer at offset ${offset}.`);
         }
         break;
       }
 
       // Log details of the found atom
       atomsFound.push({ name: atom.name || "undefined", length: atom.length, offset: atom.offset });
-      // this._logger.infoDebug(`Found top-level atom: Name=${atom.name || '?'}, Length=${atom.length}, Offset=${atom.offset}`);
+      // this._logger.logDebug(`Found top-level atom: Name=${atom.name || '?'}, Length=${atom.length}, Offset=${atom.offset}`);
 
       this._atoms.push(atom);
       offset = atom.offset + atom.length;
 
       // Safety break if offset seems wrong (e.g., negative length, goes backwards)
       if (offset <= atom.offset) {
-        this._logger.infoError(`Parsing stopped: Invalid offset progression. Current offset ${atom.offset}, next offset calculated as ${offset}.`);
+        this._logger.logError(`Parsing stopped: Invalid offset progression. Current offset ${atom.offset}, next offset calculated as ${offset}.`);
         break;
       }
     }
 
-    this._logger.infoDebug(`Finished MP4 parse. Found ${this._atoms.length} top-level atoms.`);
+    this._logger.logDebug(`Finished MP4 parse. Found ${this._atoms.length} top-level atoms.`);
     // Log the summary of atoms found
-    this._logger.infoDebug(`Top-level atoms summary: ${JSON.stringify(atomsFound)}`);
+    this._logger.logDebug(`Top-level atoms summary: ${JSON.stringify(atomsFound)}`);
 
 
     if (this._atoms.length < 1) {
@@ -104,7 +104,7 @@ class Mp4 {
     if (!this._hasValidStructure) {
       this._logError("File structure check failed: Did not find a top-level 'moov' atom (checked case-insensitively).");
     } else {
-      this._logger.infoDebug("File structure check passed: Found top-level 'moov' atom (case-insensitive check).");
+      this._logger.logDebug("File structure check passed: Found top-level 'moov' atom (case-insensitive check).");
     }
   }
 
@@ -256,7 +256,7 @@ class Mp4 {
 
   private _insertAtom(atom: Atom, path: string[]) {
     try {
-      this._logger.infoDebug(`Attempting to insert atom '${atom.name}' at path '${path.join(" > ")}'.`);
+      this._logger.logDebug(`Attempting to insert atom '${atom.name}' at path '${path.join(" > ")}'.`);
       // For tag atoms, the path should always end in 'ilst'
       if (!path || path[path.length - 1] !== "ilst") {
         this._logError(`Cannot insert tag atom '${atom.name}': Path does not end in 'ilst'.`);
@@ -275,14 +275,14 @@ class Mp4 {
       // Ensure parent's children are loaded (should be handled by _createMetadataPath returning it)
       if (parentAtom.children === undefined) {
         parentAtom.children = this._readChildAtoms(parentAtom);
-        this._logger.infoDebug(`Loaded children for '${parentAtom.name}' in _insertAtom.`);
+        this._logger.logDebug(`Loaded children for '${parentAtom.name}' in _insertAtom.`);
       }
 
       // Check if an atom with the same name already exists (e.g., existing 'covr')
       // Simple replacement: remove existing, add new. More complex merging could be added later.
       const existingIndex = parentAtom.children.findIndex(child => child.name === atom.name);
       if (existingIndex !== -1) {
-        this._logger.infoDebug(`Replacing existing atom '${atom.name}' in '${parentAtom.name}'.`);
+        this._logger.logDebug(`Replacing existing atom '${atom.name}' in '${parentAtom.name}'.`);
         parentAtom.children.splice(existingIndex, 1);
       }
 
@@ -297,7 +297,7 @@ class Mp4 {
 
       // Add the new atom
       parentAtom.children.push(atom);
-      this._logger.infoDebug(`Successfully prepared atom '${atom.name}' for insertion into '${parentAtom.name}'.`);
+      this._logger.logDebug(`Successfully prepared atom '${atom.name}' for insertion into '${parentAtom.name}'.`);
 
       // Note: Parent atom lengths will be recalculated in getBuffer()
     } catch (error) {
@@ -456,7 +456,7 @@ class Mp4 {
   // Helper method to create the metadata path if it doesn't exist
   private _createMetadataPath(): Atom | null { // Return the final 'ilst' atom if successful
     try {
-      this._logger.infoDebug("Attempting to ensure metadata path moov > udta > meta > ilst exists.");
+      this._logger.logDebug("Attempting to ensure metadata path moov > udta > meta > ilst exists.");
 
       // 1. Find 'moov' - it must exist for us to proceed.
       const moovAtom = this._findAtom(this._atoms, ["moov"]);
@@ -476,7 +476,7 @@ class Mp4 {
         let segmentAtom = this._findAtom(currentParent.children, [segmentName]);
 
         if (!segmentAtom) {
-          this._logger.infoDebug(`Creating missing '${segmentName}' atom.`);
+          this._logger.logDebug(`Creating missing '${segmentName}' atom.`);
           // Calculate offset: immediately after the parent's header (or after last existing child)
           let newAtomOffset = currentParent.offset + this._getAtomHeaderLength(currentParent);
           if (currentParent.children.length > 0) {
@@ -497,9 +497,9 @@ class Mp4 {
           currentParent.children.push(segmentAtom);
           // Don't update length here, let getBuffer recalculate based on final children
 
-          this._logger.infoDebug(`Created '${segmentName}' atom.`);
+          this._logger.logDebug(`Created '${segmentName}' atom.`);
         } else {
-          this._logger.infoDebug(`Found existing '${segmentName}' atom.`);
+          this._logger.logDebug(`Found existing '${segmentName}' atom.`);
           // Ensure children are loaded if we plan to descend further
           if (segmentAtom.children === undefined) {
             segmentAtom.children = this._readChildAtoms(segmentAtom);
@@ -509,7 +509,7 @@ class Mp4 {
       }
 
       // Return the final atom in the path ('ilst')
-      this._logger.infoDebug("Metadata path creation/verification successful. Returning 'ilst' atom.");
+      this._logger.logDebug("Metadata path creation/verification successful. Returning 'ilst' atom.");
       return currentParent;
 
     } catch (error) {
@@ -542,7 +542,7 @@ export class Mp4TagWriter implements TagWriter {
   private static _logError(message: string): void {
     // Only log each unique error message once
     if (!Mp4TagWriter._loggedErrors.has(message)) {
-      Mp4TagWriter._logger.infoDebug(`MP4 metadata: ${message}`); // Use logDebug to keep it quieter
+      Mp4TagWriter._logger.logDebug(`MP4 metadata: ${message}`); // Use logDebug to keep it quieter
       Mp4TagWriter._loggedErrors.add(message);
     }
   }
@@ -551,7 +551,7 @@ export class Mp4TagWriter implements TagWriter {
     try {
       // Create a clone of the original buffer to avoid detached ArrayBuffer issues
       this._originalBuffer = buffer.slice(0);
-      Mp4TagWriter._logger.infoDebug(`Creating Mp4TagWriter with buffer of size: ${this._originalBuffer.byteLength}`);
+      Mp4TagWriter._logger.logDebug(`Creating Mp4TagWriter with buffer of size: ${this._originalBuffer.byteLength}`);
 
       try {
         this._mp4 = new Mp4(this._originalBuffer);
@@ -561,7 +561,7 @@ export class Mp4TagWriter implements TagWriter {
         if (!this._hasValidMp4) {
           Mp4TagWriter._logError("MP4 structure validation failed. Tags will not be applied but original audio will still be saved.");
         } else {
-          Mp4TagWriter._logger.infoDebug("MP4 structure validation passed. TagWriter ready for use.");
+          Mp4TagWriter._logger.logDebug("MP4 structure validation passed. TagWriter ready for use.");
         }
       } catch (parseError) {
         this._hasValidMp4 = false;

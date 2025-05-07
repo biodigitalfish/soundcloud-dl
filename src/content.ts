@@ -246,6 +246,13 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
   } else {
     logger.logWarn("[CS_FID_LOGIC] Message has neither originalDownloadId nor downloadId at the top level of payload.");
+
+    // Attempt to extract from originalMessage if this is an error payload from the bridge
+    if (messagePayload && messagePayload.error && messagePayload.originalMessage && typeof messagePayload.originalMessage.downloadId === "string") {
+      finalDownloadId = messagePayload.originalMessage.downloadId;
+      // Using logInfo as debug logs might be off by default now.
+      logger.logInfo(`[CS_FID_LOGIC] finalDownloadId recovered from message.originalMessage.downloadId due to error payload from bridge: ${finalDownloadId}`);
+    }
   }
 
   if (!finalDownloadId && browserDownloadId) {
@@ -343,6 +350,23 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
   logger.logDebug(`[HANDLE_MSG_FROM_BG] Processing for finalDownloadId: ${finalDownloadId}. Current button state: ${currentState}. Message progress: ${progress}, success: ${messagePayload.success}`);
 
+  // Check for late/redundant simple acknowledgments
+  const isSimpleAck = messagePayload.error === "" &&
+    messagePayload.success === undefined &&
+    progress === undefined &&
+    status === undefined &&
+    completed === undefined;
+
+  if (isSimpleAck && currentState !== "Preparing" && originalIdFromPayload === finalDownloadId) {
+    // It's a simple ack, but we're not in 'Preparing' state anymore.
+    // This might be a late/redundant ack from the background after an initial command.
+    // No specific UI action needed if we're past the 'Preparing' stage for this type of message.
+    logger.logDebug(`[HANDLE_MSG_FROM_BG] Received redundant simple acknowledgment for ${finalDownloadId} while button state is ${currentState}. Ignoring for UI update. Payload:`, JSON.parse(JSON.stringify(messagePayload)));
+    // We still need to return a promise, similar to how other branches do.
+    // Indicate it was handled, but no state change from this specific redundant message.
+    return Promise.resolve({ handled: true, id: finalDownloadId, reason: "Redundant simple ack, state not Preparing" });
+  }
+
   if (messagePayload.success === true && originalIdFromPayload === finalDownloadId) {
     logger.logDebug(`[CS_DEBUG_ACK_INITIAL_MATCH] Early ack initial match for ${finalDownloadId}. Current button state: ${currentState}. Full Message:`, JSON.parse(JSON.stringify(messagePayload)));
     if (currentState === "Preparing") {
@@ -362,7 +386,8 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] currentState was NOT Preparing. Was: ${currentState}`); }
   }
 
-  if (messagePayload.success === true && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === undefined && status === undefined && completed === undefined && !error) {
+  // Adjusted condition: Accept if (success===true AND no error) OR (error==="" AND success is undefined/not explicitly false)
+  if (((messagePayload.success === true && !error) || (messagePayload.error === "" && messagePayload.success === undefined)) && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === undefined && status === undefined && completed === undefined) {
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Initial command success for ${finalDownloadId}. Transitioning to Downloading state.`);
     setButtonText(downloadButton, "Downloading... (Click to Pause)");
     downloadButton.style.background = "linear-gradient(90deg, #ff5419 0%, transparent 0%)";
@@ -393,7 +418,7 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Button state updated to Resuming, finalDownloadId=${finalDownloadId}`);
     setButtonText(downloadButton, "Resuming..."); downloadButton.style.cursor = "default"; downloadButton.onclick = null;
     downloadButtons[finalDownloadId!].state = "Resuming";
-  } else if (progress === 100) {
+  } else if (progress === 100 || (progress > 100 && progress < 101)) {
     if (currentState !== "Paused" && currentState !== "Pausing" && currentState !== "Resuming") {
       logger.logDebug(`[HANDLE_MSG_FROM_BG] Button state updated to Finishing, finalDownloadId=${finalDownloadId}`);
       setButtonText(downloadButton, "Finishing..."); downloadButton.style.background = "linear-gradient(90deg, #ff5419 100%, transparent 0%)";

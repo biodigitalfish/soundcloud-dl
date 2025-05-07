@@ -48,7 +48,7 @@ function getTranscodingDetails(details: Track): TranscodingDetails[] | null {
         }));
 
     if (mpegStreams.length < 1) {
-        logger.infoWarn("[DownloadHandler] No transcodings streams could be determined for Track " + details.id);
+        logger.logWarn("[DownloadHandler] No transcodings streams could be determined for Track " + details.id);
         return null;
     }
     let streams = mpegStreams.sort((a, b) => {
@@ -62,7 +62,7 @@ function getTranscodingDetails(details: Track): TranscodingDetails[] | null {
         streams = streams.filter((stream) => stream.quality !== "hq");
     }
     if (streams.some((stream) => stream.quality === "hq")) {
-        logger.infoInfo("[DownloadHandler] Including high quality streams for Track " + details.id);
+        logger.logInfo("[DownloadHandler] Including high quality streams for Track " + details.id);
     }
     return streams;
 }
@@ -77,7 +77,7 @@ export async function downloadTrack(
     reportProgress: (progress?: number, browserDownloadId?: number) => void
 ): Promise<number> {
     if (!isValidTrack(track)) { // Uses local helper
-        logger.infoError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
+        logger.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
         // Use the TrackError defined in this module
         throw new TrackError("Track does not satisfy constraints needed to be downloadable", track.id);
     }
@@ -115,7 +115,7 @@ export async function downloadTrack(
 
         try {
             if (isTranscodingDetails(downloadDetail)) { // Uses local helper
-                logger.infoDebug(`[DownloadHandler TrackId: ${track.id}] Getting stream details for transcoding`, downloadDetail);
+                logger.logDebug(`[DownloadHandler TrackId: ${track.id}] Getting stream details for transcoding`, downloadDetail);
                 // Uses the soundcloudApi instance from this module
                 stream = await soundcloudApi.getStreamDetails(downloadDetail.url);
                 if (stream) {
@@ -123,7 +123,7 @@ export async function downloadTrack(
                     resolvedStreamUrl = stream.url;
                     resolvedExtension = stream.extension;
                 } else {
-                    logger.infoWarn(`[DownloadHandler TrackId: ${track.id}] Failed to get stream details for transcoding option (url: ${downloadDetail.url}), trying next...`);
+                    logger.logWarn(`[DownloadHandler TrackId: ${track.id}] Failed to get stream details for transcoding option (url: ${downloadDetail.url}), trying next...`);
                     continue;
                 }
             } else {
@@ -131,11 +131,11 @@ export async function downloadTrack(
                 resolvedStreamUrl = stream.url;
                 hlsUsed = stream.hls;
                 resolvedExtension = stream.extension;
-                logger.infoDebug(`[DownloadHandler TrackId: ${track.id}] Using direct download detail (original file?)`, { url: resolvedStreamUrl, hls: hlsUsed, extension: resolvedExtension });
+                logger.logDebug(`[DownloadHandler TrackId: ${track.id}] Using direct download detail (original file?)`, { url: resolvedStreamUrl, hls: hlsUsed, extension: resolvedExtension });
             }
 
             if (!resolvedStreamUrl) {
-                logger.infoWarn(`[DownloadHandler TrackId: ${track.id}] No stream URL resolved, trying next...`, { downloadDetail });
+                logger.logWarn(`[DownloadHandler TrackId: ${track.id}] No stream URL resolved, trying next...`, { downloadDetail });
                 continue;
             }
 
@@ -159,12 +159,12 @@ export async function downloadTrack(
                 hls: finalHlsFlag,
             };
 
-            logger.infoDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
+            logger.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
             // Calls handleDownload from the same module and gets the browser's downloadId
             // The reportProgress callback passed to handleDownload will handle progress from 0 up to just before file saving.
             const browserDownloadIdFromHandler = await handleDownload(downloadData, reportProgress);
 
-            logger.infoInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
+            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
 
             // downloadTrack now takes responsibility for the final 101 signal WITH the browser ID.
             // This ensures that the browserDownloadId is available when 101 is reported.
@@ -172,7 +172,7 @@ export async function downloadTrack(
             return browserDownloadIdFromHandler; // Return the browser's downloadId up the chain
 
         } catch (error) {
-            logger.infoWarn(
+            logger.logWarn(
                 `[DownloadHandler TrackId: ${track.id}] Download attempt failed for option. Error: ${error?.message || error}`,
                 { downloadDetail, streamUrl: resolvedStreamUrl }
             );
@@ -180,7 +180,7 @@ export async function downloadTrack(
         }
     }
 
-    logger.infoError(`[DownloadHandler TrackId: ${track.id}] All download attempts failed after trying ${downloadDetails.length} options.`);
+    logger.logError(`[DownloadHandler TrackId: ${track.id}] All download attempts failed after trying ${downloadDetails.length} options.`);
     reportProgress(102); // No browser ID to report here if all failed before that stage
     // Use the TrackError defined in this module
     throw new TrackError("No version of this track could be downloaded", track.id);
@@ -188,7 +188,7 @@ export async function downloadTrack(
 
 export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<number> {
     // --- DEBUG START: Moved to very beginning ---
-    logger.infoDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
+    logger.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
     // --- DEBUG END ---
 
     let artistsString = data.username;
@@ -210,7 +210,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
     try {
         // SECTION 1: Metadata processing & rawFilenameBase creation
         try {
-            logger.infoInfo(`Initiating metadata processing for ${data.trackId} with payload`, { payload: data });
+            logger.logInfo(`Initiating metadata processing for ${data.trackId} with payload`, { payload: data });
             if (getConfigValue("normalize-track")) {
                 const extractor = new MetadataExtractor(data.title, data.username, data.userPermalink);
                 let artists = extractor.getArtists();
@@ -230,7 +230,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
 
             rawFilenameBase = sanitizeFilenameForDownload(`${artistsString} - ${titleString}`);
         } catch (error) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata processing:`, error);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata processing:`, error);
             throw new TrackError(`Metadata processing failed for track ${data.trackId}: ${(error as Error).message}`, data.trackId);
         }
 
@@ -267,50 +267,50 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                 const trackIdKey = `track-${data.trackId}`;
                 const trackDownloadHistory = await loadConfigValue("track-download-history") || {};
 
-                logger.infoDebug(`[History Check] shouldSkipExisting=${shouldSkipExisting}, trackIdKey=${trackIdKey}, history exists=${!!trackDownloadHistory}`);
+                logger.logDebug(`[History Check] shouldSkipExisting=${shouldSkipExisting}, trackIdKey=${trackIdKey}, history exists=${!!trackDownloadHistory}`);
                 if (Object.keys(trackDownloadHistory).length > 0) {
-                    logger.infoDebug(`[History Check] History has ${Object.keys(trackDownloadHistory).length} entries`);
+                    logger.logDebug(`[History Check] History has ${Object.keys(trackDownloadHistory).length} entries`);
                 }
 
                 if (trackDownloadHistory && trackDownloadHistory[trackIdKey]) {
                     const previousDownload = trackDownloadHistory[trackIdKey];
-                    logger.infoInfo(`Skipping download for TrackId: ${data.trackId}. Previously downloaded as: ${previousDownload.filename} at ${new Date(previousDownload.timestamp).toLocaleString()}`);
+                    logger.logInfo(`Skipping download for TrackId: ${data.trackId}. Previously downloaded as: ${previousDownload.filename} at ${new Date(previousDownload.timestamp).toLocaleString()}`);
                     reportProgress(101);
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
-                    logger.infoInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
+                    logger.logInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
                     return fakeDownloadId;
                 }
 
                 const specificFilename = `${pathPrefix}${rawFilenameBase}.${data.fileExtension || "mp3"}`;
                 const exactQuery: chrome.downloads.DownloadQuery = { filename: specificFilename };
-                logger.infoDebug(`[History Check] Searching downloads with exactQuery: ${JSON.stringify(exactQuery)}`);
+                logger.logDebug(`[History Check] Searching downloads with exactQuery: ${JSON.stringify(exactQuery)}`);
                 const exactMatches = await searchDownloads(exactQuery);
-                logger.infoDebug(`[History Check] exactMatches found: ${exactMatches.length}`);
+                logger.logDebug(`[History Check] exactMatches found: ${exactMatches.length}`);
 
                 const escapedPathPrefix = pathPrefix.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
                 const escapedRawFilenameBase = rawFilenameBase.replace(/[-/^$*+?.()|[\]{}]/g, "\\$&");
                 const regexQuery: chrome.downloads.DownloadQuery = { filenameRegex: `^${escapedPathPrefix}${escapedRawFilenameBase}\\..+$` };
-                logger.infoDebug(`[History Check] Searching downloads with regexQuery: ${JSON.stringify(regexQuery)}`);
+                logger.logDebug(`[History Check] Searching downloads with regexQuery: ${JSON.stringify(regexQuery)}`);
                 const regexMatches = exactMatches.length === 0 ? await searchDownloads(regexQuery) : [];
-                logger.infoDebug(`[History Check] regexMatches found: ${regexMatches.length}`);
+                logger.logDebug(`[History Check] regexMatches found: ${regexMatches.length}`);
 
                 const filenameWithoutPathRegex = `${escapedRawFilenameBase}\\..+$`;
                 const titleArtistQuery: chrome.downloads.DownloadQuery = { filenameRegex: filenameWithoutPathRegex };
-                logger.infoDebug(`[History Check] Searching downloads with titleArtistQuery: ${JSON.stringify(titleArtistQuery)}`);
+                logger.logDebug(`[History Check] Searching downloads with titleArtistQuery: ${JSON.stringify(titleArtistQuery)}`);
                 const titleArtistMatches = exactMatches.length === 0 && regexMatches.length === 0 ?
                     await searchDownloads(titleArtistQuery) : [];
-                logger.infoDebug(`[History Check] titleArtistMatches found: ${titleArtistMatches.length}`);
+                logger.logDebug(`[History Check] titleArtistMatches found: ${titleArtistMatches.length}`);
 
                 const allMatches = [...exactMatches, ...regexMatches, ...titleArtistMatches];
                 const completedDownloads = allMatches.filter(d => d.state === "complete");
 
                 if (completedDownloads.length > 0) {
-                    logger.infoInfo(`Skipping download for TrackId: ${data.trackId}. File already exists in download history: ${completedDownloads[0].filename}`);
+                    logger.logInfo(`Skipping download for TrackId: ${data.trackId}. File already exists in download history: ${completedDownloads[0].filename}`);
                     // Log the first few matches to help with debugging
                     if (completedDownloads.length > 0) {
                         completedDownloads.slice(0, 3).forEach((download, i) => {
-                            logger.infoDebug(`[History Check] Match ${i}: filename=${download.filename}, state=${download.state}`);
+                            logger.logDebug(`[History Check] Match ${i}: filename=${download.filename}, state=${download.state}`);
                         });
                     }
 
@@ -322,37 +322,37 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     reportProgress(101);
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
-                    logger.infoInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
+                    logger.logInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
                     return fakeDownloadId;
                 } else {
-                    logger.infoDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
+                    logger.logDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
                 }
             } else {
-                logger.infoDebug("[History Check] Skip existing files check is disabled");
+                logger.logDebug("[History Check] Skip existing files check is disabled");
             }
         } catch (error) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Error during filename/skip logic:`, error);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during filename/skip logic:`, error);
             throw new TrackError(`Filename/skip logic failed for track ${data.trackId}: ${(error as Error).message}`, data.trackId);
         }
 
         // SECTION 3: Artwork URL handling (updates artworkUrl used for tagging)
         try {
             if (!artworkUrl) {
-                logger.infoInfo(`No Artwork URL in data. Fallback to User Avatar (TrackId: ${data.trackId})`);
+                logger.logInfo(`No Artwork URL in data. Fallback to User Avatar (TrackId: ${data.trackId})`);
                 artworkUrl = data.avatarUrl;
             }
         } catch (error) {
-            logger.infoWarn(`[DownloadHandler TrackId: ${data.trackId}] Error checking/falling back artwork URL: ${(error as Error).message}. Will attempt with current value.`);
+            logger.logWarn(`[DownloadHandler TrackId: ${data.trackId}] Error checking/falling back artwork URL: ${(error as Error).message}. Will attempt with current value.`);
         }
 
-        logger.infoInfo(`Starting download of '${rawFilenameBase}' (TrackId: ${data.trackId})...`);
+        logger.logInfo(`Starting download of '${rawFilenameBase}' (TrackId: ${data.trackId})...`);
 
         let originalStreamBuffer: ArrayBuffer | undefined;
 
         // SECTION 4: Downloading (HLS/Progressive), Extension Inference, FFmpeg
         try {
             if (data.hls) {
-                logger.infoInfo(`[TrackId: ${data.trackId}] Starting HLS segment fetching from: ${data.streamUrl}`);
+                logger.logInfo(`[TrackId: ${data.trackId}] Starting HLS segment fetching from: ${data.streamUrl}`);
                 const [playlistBuffer, initialHeaders] = await soundcloudApi.downloadStream(data.streamUrl, (p) => {
                     if (p !== undefined) reportProgress(p * 0.1);
                 });
@@ -437,7 +437,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     const outputFilename = `output_remuxed.${data.fileExtension || "mp4"}`;
                     let progressHandlerFfmpeg: (({ progress }: { progress: number; }) => void) | undefined;
                     try {
-                        await ffmpeg.writeFile(inputFilename, new Uint8Array(originalStreamBuffer));
+                        await ffmpeg.writeFile(inputFilename, new Uint8Array(originalStreamBuffer.slice(0)));
                         const ffmpegArgs = ["-loglevel", "warning", "-i", inputFilename, "-c", "copy", outputFilename];
                         let lastReportedFFmpegProgress = -1;
                         progressHandlerFfmpeg = ({ progress }: { progress: number }) => {
@@ -457,17 +457,17 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                         await ffmpeg.deleteFile(inputFilename);
                         await ffmpeg.deleteFile(outputFilename);
                     } catch (ffmpegError) {
-                        logger.infoError("[FFMPEG_WASM] Error during remux. Proceeding with original.", ffmpegError);
+                        logger.logError("[FFMPEG_WASM] Error during remux. Proceeding with original.", ffmpegError);
                         streamBuffer = originalStreamBuffer.slice(0);
                     } finally {
                         if (progressHandlerFfmpeg && typeof ffmpeg.off === "function") ffmpeg.off("progress", progressHandlerFfmpeg);
                     }
                 } else {
-                    logger.infoWarn("[FFMPEG_WASM] Remux skipped as FFmpeg failed to load.");
+                    logger.logWarn("[FFMPEG_WASM] Remux skipped as FFmpeg failed to load.");
                 }
             }
         } catch (error) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Error during download/FFmpeg stage:`, error);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during download/FFmpeg stage:`, error);
             throw new TrackError(`Download/FFmpeg failed for track ${data.trackId}: ${(error as Error).message}`, data.trackId);
         }
 
@@ -504,7 +504,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                             const fetchedArtworkBuffer = await artworkResponse.arrayBuffer();
                             writer.setArtwork(fetchedArtworkBuffer);
                         } catch (artworkError) {
-                            logger.infoWarn(`[Artwork] Failed to fetch/set artwork for tagging TrackId: ${data.trackId}`, artworkError);
+                            logger.logWarn(`[Artwork] Failed to fetch/set artwork for tagging TrackId: ${data.trackId}`, artworkError);
                         }
                     }
 
@@ -512,19 +512,19 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     if (tagWriterResult?.buffer?.byteLength > 0) {
                         taggedBuffer = tagWriterResult.buffer;
                     } else {
-                        logger.infoWarn("[Metadata] TagWriter returned invalid buffer. Using untagged buffer.");
+                        logger.logWarn("[Metadata] TagWriter returned invalid buffer. Using untagged buffer.");
                         taggedBuffer = streamBuffer.slice(0);
                     }
                 } else {
-                    logger.infoWarn(`[TrackId: ${data.trackId}] No TagWriter for ext '${data.fileExtension}'. Using untagged buffer.`);
+                    logger.logWarn(`[TrackId: ${data.trackId}] No TagWriter for ext '${data.fileExtension}'. Using untagged buffer.`);
                     taggedBuffer = streamBuffer.slice(0);
                 }
             } else {
-                logger.infoInfo(`[TrackId: ${data.trackId}] Metadata disabled or no streamBuffer. Using untagged.`);
+                logger.logInfo(`[TrackId: ${data.trackId}] Metadata disabled or no streamBuffer. Using untagged.`);
                 taggedBuffer = streamBuffer?.slice(0);
             }
         } catch (error) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata tagging:`, error);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata tagging:`, error);
             taggedBuffer = streamBuffer?.slice(0);
         }
 
@@ -536,7 +536,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                 streamBuffer?.byteLength > 0 ? streamBuffer.slice(0) :
                     originalStreamBuffer?.byteLength > 0 ? originalStreamBuffer.slice(0) :
                         (() => { throw new TrackError(`All buffers invalid for ${data.trackId}`, data.trackId); })();
-            if (bufferToSave.byteLength < 100) logger.infoWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
+            if (bufferToSave.byteLength < 100) logger.logWarn(`Final buffer small: ${bufferToSave.byteLength} bytes.`);
 
             const blobOptions: BlobPropertyBag = {};
             if (determinedContentType) blobOptions.type = determinedContentType;
@@ -547,11 +547,11 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             const downloadBlob = new Blob([bufferToSave], blobOptions);
 
             // Use our browser-compatible utility to create the URL
-            logger.infoInfo(`Creating URL for download (TrackId: ${data.trackId}). Service worker context: ${isServiceWorkerContext()}`);
+            logger.logInfo(`Creating URL for download (TrackId: ${data.trackId}). Service worker context: ${isServiceWorkerContext()}`);
             objectUrlToRevoke = await createURLFromBlob(downloadBlob);
 
         } catch (error) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Error preparing final buffer or Blob/DataURL:`, error);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error preparing final buffer or Blob/DataURL:`, error);
             throw new TrackError(`Failed to prepare buffer/DataURL for track ${data.trackId}: ${(error as Error).message}`, data.trackId);
         }
 
@@ -566,7 +566,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
 
         // SECTION 7: File Saving and History Update
         try {
-            logger.infoInfo(`Downloading track as '${finalDownloadFilename}' (TrackId: ${data.trackId}). SaveAs: ${saveAs}`);
+            logger.logInfo(`Downloading track as '${finalDownloadFilename}' (TrackId: ${data.trackId}). SaveAs: ${saveAs}`);
             const urlToDownload = objectUrlToRevoke; // This now holds the data URL
 
             if (!urlToDownload) {
@@ -575,7 +575,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
 
             // Get the downloadId from downloadToFile
             const browserDownloadId = await downloadToFile(urlToDownload, finalDownloadFilename, saveAs);
-            logger.infoInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
+            logger.logInfo(`Successfully initiated browser download for '${rawFilenameBase}' (TrackId: ${data.trackId}) with browserDownloadId: ${browserDownloadId}`);
 
             if (shouldSkipExisting) {
                 const histKey = `track-${data.trackId}`;
@@ -588,14 +588,14 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             // The caller (downloadTrack) will be responsible for the final 101 progress report.
             return browserDownloadId;
         } catch (saveError) {
-            logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
+            logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
             throw new TrackError(`Save failed for track ${data.trackId}: ${(saveError as Error).message}`, data.trackId);
         }
         // No finally block with URL.revokeObjectURL is needed for data URLs.
         // The variable objectUrlToRevoke could be renamed throughout the function if desired for clarity.
 
     } catch (error) {
-        logger.infoError(`[DownloadHandler TrackId: ${data.trackId}] Uncaught error in handleDownload`, error);
+        logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Uncaught error in handleDownload`, error);
         // Ensure progress is reported as error if it hasn't reached completion stage
         // However, reportProgress might not be defined if error is very early. Consider implications.
         // reportProgress(undefined); // This might be too simplistic or cause issues if called too early.

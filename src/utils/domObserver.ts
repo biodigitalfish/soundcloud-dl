@@ -20,31 +20,31 @@ export class DomObserver {
   start(node: Node) {
     this.observer.observe(node, { subtree: true, attributes: true, childList: true });
 
-    this.logger.infoDebug("Started");
+    this.logger.logDebug("Started");
   }
 
   stop() {
     this.observer.disconnect();
 
-    this.logger.infoDebug("Stopped");
+    this.logger.logDebug("Stopped");
   }
 
   addEvent(event: ObserverEvent) {
     if (!event.selector) {
-      this.logger.infoWarn("Selector was not specified");
+      this.logger.logWarn("Selector was not specified");
 
       return;
     }
 
     if (!event.callback) {
-      this.logger.infoWarn("Callback was not specified");
+      this.logger.logWarn("Callback was not specified");
 
       return;
     }
 
     this.events.push(event);
 
-    this.logger.infoDebug("Event added", event);
+    this.logger.logDebug("Event added", event);
   }
 
   removeEvent(name: string) {

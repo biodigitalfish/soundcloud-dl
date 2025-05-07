@@ -1,51 +1,4 @@
-var LogLevel = /* @__PURE__ */ ((LogLevel2) => {
-  LogLevel2[LogLevel2["Debug"] = 0] = "Debug";
-  LogLevel2[LogLevel2["Information"] = 1] = "Information";
-  LogLevel2[LogLevel2["Warning"] = 2] = "Warning";
-  LogLevel2[LogLevel2["Error"] = 3] = "Error";
-  LogLevel2[LogLevel2["None"] = 4] = "None";
-  return LogLevel2;
-})(LogLevel || {});
-class Logger {
-  constructor(source, minLogLevel) {
-    this.source = source;
-    this.minLogLevel = minLogLevel;
-  }
-  log(logLevel, message, ...args) {
-    if (logLevel < this.minLogLevel) return;
-    const timestamp = `[${(/* @__PURE__ */ new Date()).toJSON()}]`;
-    const source = `[SOUNDCLOUD-DL:${this.source}]`;
-    switch (logLevel) {
-      case 3:
-        console.error(timestamp, source, message, ...args);
-        break;
-      case 2:
-        console.warn(timestamp, source, message, ...args);
-        break;
-      case 1:
-        console.info(timestamp, source, message, ...args);
-        break;
-      case 0:
-        console.debug(timestamp, source, message, ...args);
-        break;
-    }
-  }
-  logDebug(message, ...args) {
-    this.log(0, message, ...args);
-  }
-  logInfo(message, ...args) {
-    this.log(1, message, ...args);
-  }
-  logWarn(message, ...args) {
-    this.log(2, message, ...args);
-  }
-  logError(message, ...args) {
-    this.log(3, message, ...args);
-  }
-  static create(name, minLogLevel = 1) {
-    return new Logger(name, minLogLevel);
-  }
-}
+import { L as Logger } from "./logger-DNjPuH99.js";
 const logger$2 = Logger.create("Browser-Utils");
 function isManifestV3() {
   try {
@@ -259,7 +212,7 @@ const onMessage = (callback) => {
       } catch {
         eventDataString = "<Error Stringifying Data>";
       }
-      console.log(`[CompatStubs Listener Raw Detail] Received window message: sourceIsWindow=${event.source === window}, event.data.source='${dataSource}', SCRIPT_ID='${SCRIPT_ID}', event.data.direction='${dataDirection}', expectedDirection='from-background-via-bridge', FullData=${eventDataString}`);
+      logger$1.logInfo(`[CompatStubs Listener Raw Detail] Received window message: sourceIsWindow=${event.source === window}, event.data.source='${dataSource}', SCRIPT_ID='${SCRIPT_ID}', event.data.direction='${dataDirection}', expectedDirection='from-background-via-bridge', FullData=${eventDataString}`);
       const cond1 = event.source === window;
       const cond2 = !!event.data;
       let cond3 = false;
@@ -272,17 +225,17 @@ const onMessage = (callback) => {
         cond3 = event.data.source === SCRIPT_ID;
         cond4 = event.data.direction === "from-background-via-bridge";
       }
-      console.log(`[CompatStubs EVAL CHECK] cond1 (event.source === window): ${cond1}`);
-      console.log(`[CompatStubs EVAL CHECK] cond2 (!!event.data): ${cond2}`);
-      console.log(`[CompatStubs EVAL CHECK] cond3 (event.data.source === SCRIPT_ID): ${cond3} (event.data?.source: '${actualEventDataSource}', SCRIPT_ID: '${SCRIPT_ID}')`);
-      console.log(`[CompatStubs EVAL CHECK] cond4 (event.data.direction === "from-background-via-bridge"): ${cond4} (event.data?.direction: '${actualEventDataDirection}')`);
-      console.log(`[CompatStubs EVAL CHECK] Full event.data for this check: ${eventDataString}`);
+      logger$1.logInfo(`[CompatStubs EVAL CHECK] cond1 (event.source === window): ${cond1}`);
+      logger$1.logInfo(`[CompatStubs EVAL CHECK] cond2 (!!event.data): ${cond2}`);
+      logger$1.logInfo(`[CompatStubs EVAL CHECK] cond3 (event.data.source === SCRIPT_ID): ${cond3} (event.data?.source: '${actualEventDataSource}', SCRIPT_ID: '${SCRIPT_ID}')`);
+      logger$1.logInfo(`[CompatStubs EVAL CHECK] cond4 (event.data.direction === "from-background-via-bridge"): ${cond4} (event.data?.direction: '${actualEventDataDirection}')`);
+      logger$1.logInfo(`[CompatStubs EVAL CHECK] Full event.data for this check: ${eventDataString}`);
       if (cond1 && cond2 && cond3 && cond4) {
-        console.debug(">>> COMPATIBILITY STUBS: PAGE CONTEXT LISTENER: PASSED ALL FILTERS! <<< Payload:", JSON.stringify(event.data.payload));
+        logger$1.logDebug(">>> COMPATIBILITY STUBS: PAGE CONTEXT LISTENER: PASSED ALL FILTERS! <<< Payload:", JSON.stringify(event.data.payload));
         const simulatedSender = { id: typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.id : void 0 };
         callback(event.data.payload, simulatedSender).catch((err) => logger$1.logError("Error in onMessage callback (page context):", err));
       } else {
-        console.warn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
+        logger$1.logWarn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
       }
     });
   } else {
@@ -2851,7 +2804,8 @@ const config = {
   "enable-hls-rate-limiting": { sync: true, defaultValue: true },
   "hls-rate-limit-delay-ms": { sync: true, defaultValue: 200 },
   "track-download-history": { defaultValue: {} },
-  "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true }
+  "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
+  "debugLoggingEnabled": { defaultValue: false }
 };
 const configKeys = Object.keys(config);
 function isConfigKey(key) {
@@ -2944,37 +2898,35 @@ function getDisplayValue(value, entry) {
   return value;
 }
 export {
-  configKeys as A,
-  resetConfig as B,
-  sendMessageToBackend as C,
-  determineIfUrlIsSet as D,
-  setOnConfigValueChanged as E,
-  Logger as L,
+  resetConfig as A,
+  sendMessageToBackend as B,
+  determineIfUrlIsSet as C,
+  setOnConfigValueChanged as D,
   XRegExp as X,
-  LogLevel as a,
-  commonjsGlobal as b,
+  commonjsGlobal as a,
+  getDefaultExportFromCjs as b,
   concatArrayBuffers as c,
-  getDefaultExportFromCjs as d,
-  getConfigValue as e,
-  searchDownloads as f,
+  getConfigValue as d,
+  searchDownloads as e,
+  storeConfigValue as f,
   getPathFromExtensionFile as g,
-  storeConfigValue as h,
+  createURLFromBlob as h,
   isServiceWorkerContext as i,
-  createURLFromBlob as j,
-  downloadToFile as k,
+  downloadToFile as j,
+  sendMessageToTab as k,
   loadConfigValue as l,
-  sendMessageToTab as m,
-  eraseDownloadHistoryEntry as n,
-  getExtensionManifest as o,
-  loadConfiguration as p,
-  onMessage as q,
-  onBeforeSendHeaders as r,
+  eraseDownloadHistoryEntry as m,
+  getExtensionManifest as n,
+  loadConfiguration as o,
+  onMessage as p,
+  onBeforeSendHeaders as q,
+  onBeforeRequest as r,
   sanitizeFilenameForDownload as s,
-  onBeforeRequest as t,
-  onPageActionClicked as u,
-  registerConfigChangeHandler as v,
-  setAuthHeaderRule as w,
-  setClientIdRule as x,
-  usesDeclarativeNetRequestForModification as y,
-  openOptionsPage as z
+  onPageActionClicked as t,
+  registerConfigChangeHandler as u,
+  setAuthHeaderRule as v,
+  setClientIdRule as w,
+  usesDeclarativeNetRequestForModification as x,
+  openOptionsPage as y,
+  configKeys as z
 };

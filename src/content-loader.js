@@ -1,10 +1,10 @@
 // This script is a loader for the main content.js script.
 // It is injected directly into the page context to bypass Chrome's content script isolation
 // and allow content.js to access the page's JavaScript environment if needed.
-import { Logger } from "./utils/logger";
-const logger = Logger.create("Content Loader");
 
-logger.logInfo("[SCDL] content_loader.js loaded");
+// Removed Logger import and usage as this script runs directly in page context
+// and cannot resolve module imports relative to the extension.
+
 
 (function () {
     // Use the appropriate runtime API to get the URL

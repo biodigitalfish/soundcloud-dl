@@ -2,7 +2,9 @@
 // It is injected directly into the page context to bypass Chrome's content script isolation
 // and allow content.js to access the page's JavaScript environment if needed.
 
-console.log("[SCDL] content_loader.js loaded");
+// Removed Logger import and usage as this script runs directly in page context
+// and cannot resolve module imports relative to the extension.
+
 
 (function () {
     // Use the appropriate runtime API to get the URL

@@ -94,7 +94,7 @@ export async function storeConfigValue<TKey extends keyof Config>(key: TKey, val
     value = entry.sanitize(value as never);
   }
 
-  logger.infoInfo("Setting", key, "to", getDisplayValue(value, entry));
+  logger.logInfo("Setting", key, "to", getDisplayValue(value, entry));
 
   entry.value = value;
 
@@ -109,7 +109,7 @@ export async function storeConfigValue<TKey extends keyof Config>(key: TKey, val
   } catch (_error) {
     const reason = "Failed to store configuration value";
 
-    logger.infoError(reason, { key, value, sync });
+    logger.logError(reason, { key, value, sync });
 
     return Promise.reject(reason);
   }
@@ -165,7 +165,7 @@ export async function resetConfig() {
 
 export function getConfigValue<TKey extends keyof Config>(key: TKey): Config[TKey]["value"] {
   if (!config[key]) {
-    logger.infoError(`[getConfigValue] Attempted to access config key '${key}' but it was undefined in the config object!`);
+    logger.logError(`[getConfigValue] Attempted to access config key '${key}' but it was undefined in the config object!`);
     throw new Error(`Config key '${key}' is missing from the config object.`);
   }
   return config[key].value;
@@ -190,11 +190,11 @@ const handleStorageChanged = (changes: { [key: string]: StorageChange }, areanam
 
     // --- DEBUG START ---
     if (key === "track-download-history") {
-      logger.infoDebug(`[handleStorageChanged] Received update for ${key}. New value:`, newValue);
+      logger.logDebug(`[handleStorageChanged] Received update for ${key}. New value:`, newValue);
     }
     // --- DEBUG END ---
 
-    if (areaname !== "local") logger.infoInfo("Remote updating", key, "to", getDisplayValue(newValue, entry));
+    if (areaname !== "local") logger.logInfo("Remote updating", key, "to", getDisplayValue(newValue, entry));
 
     entry.value = newValue;
 

@@ -1,3 +1,5 @@
+import { L as Logger } from "./logger-DNjPuH99.js";
+const logger = Logger.create("Repost Blocker");
 function isStreamUrl(url) {
   return url && url.hostname === "api-v2.soundcloud.com" && url.pathname === "/stream";
 }
@@ -61,7 +63,7 @@ function hijackedSendMethod(body) {
       }
     }
   } catch (error) {
-    console.error("Error in hijackedSendMethod:", error);
+    logger.logError("Error in hijackedSendMethod:", error);
   }
   return originalSendMethod.call(this, body);
 }

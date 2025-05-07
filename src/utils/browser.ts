@@ -30,7 +30,7 @@ export function isManifestV3(): boolean {
             return browser.runtime.getManifest().manifest_version === 3;
         }
     } catch (e) {
-        logger.infoWarn("Failed to detect manifest version:", e);
+        logger.logWarn("Failed to detect manifest version:", e);
     }
     return false;
 }
@@ -62,7 +62,7 @@ const RULE_ID_CLIENT_ID = 2;
  */
 export async function setAuthHeaderRule(oauthToken?: string | null): Promise<void> {
     if (!usesDeclarativeNetRequestForModification()) {
-        logger.infoDebug("Skipping declarativeNetRequest OAuth rule update: DNR not used for modification in this environment.");
+        logger.logDebug("Skipping declarativeNetRequest OAuth rule update: DNR not used for modification in this environment.");
         return;
     }
 
@@ -95,12 +95,12 @@ export async function setAuthHeaderRule(oauthToken?: string | null): Promise<voi
                 removeRuleIds: rulesToRemove,
                 addRules: rulesToAdd
             });
-            logger.infoInfo(`OAuth DNR rule updated. Token: ${oauthToken ? "SET" : "REMOVED"}`);
+            logger.logInfo(`OAuth DNR rule updated. Token: ${oauthToken ? "SET" : "REMOVED"}`);
         } else {
-            logger.infoError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
+            logger.logError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
         }
     } catch (error) {
-        logger.infoError("Failed to update DNR rules for OAuth token:", error);
+        logger.logError("Failed to update DNR rules for OAuth token:", error);
     }
 }
 
@@ -110,7 +110,7 @@ export async function setAuthHeaderRule(oauthToken?: string | null): Promise<voi
  */
 export async function setClientIdRule(clientId?: string | null): Promise<void> {
     if (!usesDeclarativeNetRequestForModification()) {
-        logger.infoDebug("Skipping declarativeNetRequest ClientID rule update: DNR not used for modification in this environment.");
+        logger.logDebug("Skipping declarativeNetRequest ClientID rule update: DNR not used for modification in this environment.");
         return;
     }
 
@@ -151,12 +151,12 @@ export async function setClientIdRule(clientId?: string | null): Promise<void> {
                 removeRuleIds: rulesToRemove,
                 addRules: rulesToAdd
             });
-            logger.infoInfo(`Client_id DNR rule updated. ClientID: ${clientId ? "SET" : "REMOVED"}`);
+            logger.logInfo(`Client_id DNR rule updated. ClientID: ${clientId ? "SET" : "REMOVED"}`);
         } else {
-            logger.infoError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
+            logger.logError("Cannot update DNR rules: chrome.declarativeNetRequest is not defined.");
         }
     } catch (error) {
-        logger.infoError("Failed to update DNR rules for client_id:", error);
+        logger.logError("Failed to update DNR rules for client_id:", error);
     }
 }
 
@@ -169,16 +169,16 @@ export async function createURLFromBlob(blob: Blob): Promise<string> {
     // First try with URL.createObjectURL which is more efficient
     if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
         try {
-            logger.infoDebug("Using URL.createObjectURL");
+            logger.logDebug("Using URL.createObjectURL");
             return URL.createObjectURL(blob);
         } catch (e) {
-            logger.infoWarn("URL.createObjectURL failed:", e);
+            logger.logWarn("URL.createObjectURL failed:", e);
             // Fall through to FileReader fallback
         }
     }
 
     // Fallback to data URL
-    logger.infoInfo("Falling back to FileReader.readAsDataURL");
+    logger.logInfo("Falling back to FileReader.readAsDataURL");
     try {
         const reader = new FileReader();
         return await new Promise<string>((resolve, reject) => {
@@ -187,7 +187,7 @@ export async function createURLFromBlob(blob: Blob): Promise<string> {
             reader.readAsDataURL(blob);
         });
     } catch (e) {
-        logger.infoError("Both URL creation methods failed:", e);
+        logger.logError("Both URL creation methods failed:", e);
         throw new Error(`Failed to create URL from blob: ${e.message}`);
     }
 }
@@ -200,9 +200,9 @@ export function revokeURL(url: string): void {
     if (url && url.startsWith("blob:")) {
         try {
             URL.revokeObjectURL(url);
-            logger.infoDebug("Object URL revoked");
+            logger.logDebug("Object URL revoked");
         } catch (e) {
-            logger.infoWarn("Failed to revoke object URL:", e);
+            logger.logWarn("Failed to revoke object URL:", e);
         }
     }
     // Data URLs don't need to be revoked
@@ -223,13 +223,13 @@ export function eraseDownloadHistoryEntry(filenameRegex: string): void {
 
         chrome.downloads.erase(query, (erasedIds) => {
             if (erasedIds && erasedIds.length > 0) {
-                logger.infoInfo(`Force redownload: Removed ${erasedIds.length} matching entries from browser download history.`);
+                logger.logInfo(`Force redownload: Removed ${erasedIds.length} matching entries from browser download history.`);
             } else {
-                logger.infoDebug("Force redownload: No matching entries found in browser download history to erase.");
+                logger.logDebug("Force redownload: No matching entries found in browser download history to erase.");
             }
         });
     } else {
-        logger.infoDebug("Skipping browser download history erase: chrome.downloads.erase is not available.");
+        logger.logDebug("Skipping browser download history erase: chrome.downloads.erase is not available.");
     }
 }
 
@@ -247,7 +247,7 @@ export function determineIfUrlIsSet(url: string, initialIsSet: boolean): boolean
     // In some cases, the initial detection might miss sets in Firefox.
     if (!finalIsSet && typeof browser !== "undefined" && url) {
         if (url.includes("/sets/") || url.includes("/albums/")) {
-            logger.infoDebug(`[BrowserUtils] Firefox detected, forcing isSet=true for URL: ${url}`);
+            logger.logDebug(`[BrowserUtils] Firefox detected, forcing isSet=true for URL: ${url}`);
             finalIsSet = true;
         }
     }

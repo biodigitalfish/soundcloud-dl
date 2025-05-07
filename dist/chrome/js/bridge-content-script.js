@@ -6,7 +6,7 @@ window.addEventListener("message", (event) => {
   const message = event.data.payload;
   const originalMessageId = event.data.messageId;
   if (message && message.type && originalMessageId) {
-    console.log(`[Bridge] Received from page for background (ID: ${originalMessageId}):`, message);
+    console.debug(`[Bridge] Received from page for background (ID: ${originalMessageId}):`, message);
     chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) {
         console.error("[Bridge] Error sending message to background or receiving response:", chrome.runtime.lastError);
@@ -18,7 +18,7 @@ window.addEventListener("message", (event) => {
           // Include messageId in error response
         }, "*");
       } else {
-        console.log(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
+        console.debug(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
         window.postMessage({
           source: SCRIPT_ID,
           direction: "from-background-via-bridge",
@@ -34,7 +34,6 @@ window.addEventListener("message", (event) => {
 });
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id === chrome.runtime.id && !sender.tab) {
-    console.log("[Bridge] Received broadcast from background, sending to page:", message);
     window.postMessage({
       source: SCRIPT_ID,
       direction: "from-background-via-bridge",
@@ -44,4 +43,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
-console.log("[SoundCloud DL] Bridge content script loaded and listening.");
+console.debug("[SoundCloud DL] Bridge content script loaded and listening.");

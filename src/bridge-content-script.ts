@@ -3,8 +3,6 @@
  * and the extension's background script. It runs in the isolated content script world
  * and has access to chrome.runtime APIs.
  */
-import { Logger } from "./utils/logger";
-const logger = Logger.create("Bridge Content Script");
 
 const SCRIPT_ID = "soundcloud-dl-bridge"; // For identifying messages
 
@@ -19,11 +17,11 @@ window.addEventListener("message", (event) => {
     const originalMessageId = event.data.messageId; // Capture the messageId
 
     if (message && message.type && originalMessageId) { // Basic validation + check for messageId
-        logger.logInfo(`[Bridge] Received from page for background (ID: ${originalMessageId}):`, message);
+        console.debug(`[Bridge] Received from page for background (ID: ${originalMessageId}):`, message);
         chrome.runtime.sendMessage(message, (response) => {
             // Send response from background back to the page, including the original messageId
             if (chrome.runtime.lastError) {
-                logger.logError("[Bridge] Error sending message to background or receiving response:", chrome.runtime.lastError);
+                console.error("[Bridge] Error sending message to background or receiving response:", chrome.runtime.lastError);
                 window.postMessage({
                     source: SCRIPT_ID,
                     direction: "from-background-via-bridge",
@@ -31,7 +29,7 @@ window.addEventListener("message", (event) => {
                     messageId: originalMessageId // Include messageId in error response
                 }, "*");
             } else {
-                logger.logInfo(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
+                console.debug(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
                 window.postMessage({
                     source: SCRIPT_ID,
                     direction: "from-background-via-bridge",
@@ -41,7 +39,7 @@ window.addEventListener("message", (event) => {
             }
         });
     } else {
-        logger.logWarn("[Bridge] Received message from page is invalid or missing messageId:", event.data);
+        console.warn("[Bridge] Received message from page is invalid or missing messageId:", event.data);
     }
 });
 
@@ -49,7 +47,7 @@ window.addEventListener("message", (event) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Ensure it's from our extension's background
     if (sender.id === chrome.runtime.id && (!sender.tab)) { // sender.tab check ensures it's from background/popup
-        logger.logInfo("[Bridge] Received broadcast from background, sending to page:", message);
+        // console.debug("[Bridge] Received broadcast from background, sending to page:", message);
         // Broadcast messages don't have a specific messageId to correlate
         window.postMessage({
             source: SCRIPT_ID,
@@ -61,4 +59,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false; // Indicate we are not sending an async response from this specific listener.
 });
 
-logger.logInfo("[SoundCloud DL] Bridge content script loaded and listening."); 
+console.debug("[SoundCloud DL] Bridge content script loaded and listening."); 

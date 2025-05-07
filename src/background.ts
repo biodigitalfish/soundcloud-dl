@@ -13,7 +13,6 @@ import { loadConfiguration, storeConfigValue, getConfigValue, registerConfigChan
 import { handleIncomingMessage } from "./messageHandler";
 import { DownloadProgress } from "./types";
 import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientIdRule } from "./utils/browser";
-
 // --- Main TrackError class for background.ts specific errors ---
 export class TrackError extends Error {
   constructor(message: string, trackId?: number) {
@@ -44,11 +43,11 @@ async function updateClientIdRule(clientId?: string | null): Promise<void> {
   await setClientIdRule(clientId);
 }
 
-logger.infoInfo("Starting with version: " + manifest.version);
+logger.logInfo("Starting with version: " + manifest.version);
 
 // Load configuration and THEN register message listener AND SET INITIAL DNR RULE
 loadConfiguration(true).then(async () => {
-  logger.infoInfo("Initial configuration loaded. Registering message listener and setting initial DNR rules.");
+  logger.logInfo("Initial configuration loaded. Registering message listener and setting initial DNR rules.");
   onMessage(handleIncomingMessage);
 
   const initialOauthToken = getConfigValue("oauth-token") as string | null | undefined;
@@ -66,16 +65,16 @@ loadConfiguration(true).then(async () => {
 export function sendDownloadProgress(tabId: number, downloadId: string, progress?: number, error?: Error | string, status?: "Paused" | "Resuming", browserDownloadId?: number) {
   // Enhanced validation of downloadId
   if (!downloadId || typeof downloadId !== "string" || downloadId.trim() === "") {
-    logger.infoError(`Attempted to send download progress with invalid downloadId: ${JSON.stringify(downloadId)}`);
+    logger.logError(`Attempted to send download progress with invalid downloadId: ${JSON.stringify(downloadId)}`);
 
     // Rather than completely failing, try to log helpful diagnostic info
     const callStack = new Error().stack;
-    logger.infoError(`Call stack for invalid downloadId: ${callStack}`);
+    logger.logError(`Call stack for invalid downloadId: ${callStack}`);
 
     // For messages with progress codes that indicate completion, we should really
     // try to send them even without a downloadId
     if (progress === 101 || progress === 102) {
-      logger.infoWarn(`Attempting to send COMPLETION message (${progress}) even with missing downloadId`);
+      logger.logWarn(`Attempting to send COMPLETION message (${progress}) even with missing downloadId`);
       // Try sending a special message that content.ts can try to match to an active download
       const fallbackMessage = {
         downloadId: "undefined_completion",
@@ -88,7 +87,7 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
       };
 
       sendMessageToTab(tabId, fallbackMessage).catch(err => {
-        logger.infoError(`Failed to send fallback completion message: ${err}`);
+        logger.logError(`Failed to send fallback completion message: ${err}`);
       });
     }
     return;
@@ -102,11 +101,11 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
   }
 
   if (progress === 101 || progress === 102) {
-    logger.infoInfo(`Sending COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress}`);
+    logger.logInfo(`Sending COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress}`);
   } else if (progress === 100) {
-    logger.infoInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
+    logger.logInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
   } else if (progress !== undefined && progress >= 0) {
-    // logger.infoDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
+    // logger.logDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
   }
 
   const downloadProgressMessage: DownloadProgress = {
@@ -122,13 +121,13 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
   // Only send one message, regardless of progress type.
   // The previous logic for multiple timed messages for 101/102 is removed for testing.
   if (progress === 101 || progress === 102) {
-    logger.infoInfo(`Sending SINGLE COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress} (BrowserDownloadId: ${browserDownloadId || "N/A"})`);
+    logger.logInfo(`Sending SINGLE COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress} (BrowserDownloadId: ${browserDownloadId || "N/A"})`);
     sendMessageToTab(tabId, downloadProgressMessage).catch(err => {
-      logger.infoWarn(`Failed to send completion message to tab ${tabId}:`, err);
+      logger.logWarn(`Failed to send completion message to tab ${tabId}:`, err);
     });
   } else { // For other progress, pause, resume, or general updates
     sendMessageToTab(tabId, downloadProgressMessage).catch(err => {
-      logger.infoWarn(`Failed to send progress/status message to tab ${tabId}:`, err);
+      logger.logWarn(`Failed to send progress/status message to tab ${tabId}:`, err);
     });
   }
 }
@@ -159,7 +158,7 @@ onBeforeSendHeaders(
             const authHeader = details.requestHeaders[i].value as string;
             const result = authRegex.exec(authHeader);
             if (result && result.length >= 2 && result[1] !== oauthTokenFromStorage) {
-              logger.infoInfo("Sniffed and storing OAuth token from request header (all envs).");
+              logger.logInfo("Sniffed and storing OAuth token from request header (all envs).");
               storeConfigValue("oauth-token", result[1]);
             }
             break;
@@ -179,14 +178,14 @@ onBeforeSendHeaders(
           const authHeader = details.requestHeaders[i].value as string;
           const result = authRegex.exec(authHeader);
           if (result && result.length >= 2 && result[1] !== oauthToken) {
-            logger.infoInfo("Sniffed and storing OAuth token (Firefox/non-DNR).");
+            logger.logInfo("Sniffed and storing OAuth token (Firefox/non-DNR).");
             storeConfigValue("oauth-token", result[1]);
           }
           break;
         }
       }
       if (!requestHasAuth && oauthToken) {
-        // logger.infoDebug(`Adding OAuth token to request for ${details.url} (Firefox/non-DNR)`);
+        // logger.logDebug(`Adding OAuth token to request for ${details.url} (Firefox/non-DNR)`);
         details.requestHeaders.push({
           name: "Authorization",
           value: "OAuth " + oauthToken,
@@ -204,10 +203,10 @@ onBeforeRequest(
   (details: chrome.webRequest.WebRequestBodyDetails) => {
     const url = new URL(details.url);
     if (url.pathname === "/connect/session" && getConfigValue("oauth-token") === null) {
-      logger.infoInfo("User logged in - clearing potentially stale token.");
+      logger.logInfo("User logged in - clearing potentially stale token.");
       storeConfigValue("oauth-token", undefined);
     } else if (url.pathname === "/sign-out") {
-      logger.infoInfo("User logged out");
+      logger.logInfo("User logged out");
       storeConfigValue("oauth-token", null);
       storeConfigValue("user-id", null);
       storeConfigValue("followed-artists", []);
@@ -230,14 +229,14 @@ onBeforeRequest(
       if (clientIdFromUrl) {
         const storedClientId = getConfigValue("client-id") as string | null;
         if (clientIdFromUrl !== storedClientId) {
-          logger.infoInfo(`Found new client_id: ${clientIdFromUrl}. Storing it.`);
+          logger.logInfo(`Found new client_id: ${clientIdFromUrl}. Storing it.`);
           storeConfigValue("client-id", clientIdFromUrl);
         }
       } else {
         if (!usesDeclarativeNetRequestForModification()) {
           const storedClientId = getConfigValue("client-id") as string | null;
           if (storedClientId) {
-            logger.infoDebug(`Adding ClientId to ${details.url} via redirect (Firefox/non-DNR)`);
+            logger.logDebug(`Adding ClientId to ${details.url} via redirect (Firefox/non-DNR)`);
             url.searchParams.append("client_id", storedClientId);
             return { redirectUrl: url.toString() };
           }
@@ -257,19 +256,19 @@ onPageActionClicked(() => {
 const oauthTokenChanged = async (token: string | null | undefined) => {
   if (!token) {
     storeConfigValue("user-id", null);
-    logger.infoInfo("OAuth token cleared, user ID cleared.");
+    logger.logInfo("OAuth token cleared, user ID cleared.");
     return;
   }
   const user = await soundcloudApi.getCurrentUser();
   if (!user) {
-    logger.infoError("Failed to fetch currently logged in user (after token change/init)");
+    logger.logError("Failed to fetch currently logged in user (after token change/init)");
     return;
   }
   storeConfigValue("user-id", user.id);
-  logger.infoInfo("Logged in as", user.username);
+  logger.logInfo("Logged in as", user.username);
   const followedArtistIds = await soundcloudApi.getFollowedArtistIds(user.id);
   if (!followedArtistIds) {
-    logger.infoError("Failed to fetch ids of followed artists");
+    logger.logError("Failed to fetch ids of followed artists");
     return;
   }
   storeConfigValue("followed-artists", followedArtistIds);
@@ -281,7 +280,7 @@ registerConfigChangeHandler("oauth-token", async (newValue) => {
 });
 
 registerConfigChangeHandler("client-id", async (newClientId) => {
-  logger.infoInfo(`client-id config changed to: ${newClientId}. Updating DNR rule.`);
+  logger.logInfo(`client-id config changed to: ${newClientId}. Updating DNR rule.`);
   await updateClientIdRule(newClientId as string | null | undefined);
 });
 
