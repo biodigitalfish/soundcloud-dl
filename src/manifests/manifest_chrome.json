@@ -27,13 +27,13 @@
                 "*://*.soundcloud.com/*"
             ],
             "js": [
-                "js/content-loader.js"
+                "js/content-loader-scdl.js"
             ],
             "run_at": "document_idle"
         }
     ],
     "background": {
-        "service_worker": "js/background.js",
+        "service_worker": "js/background-scdl.js",
         "type": "module"
     },
     "options_ui": {
@@ -51,9 +51,9 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "js/repostBlocker.js",
-                "js/config-*.js",
-                "js/content.js"
+                "js/repostBlocker-scdl.js",
+                "js/config-scdl-*.js",
+                "js/content-scdl.js"
             ],
             "matches": [
                 "*://*.soundcloud.com/*"

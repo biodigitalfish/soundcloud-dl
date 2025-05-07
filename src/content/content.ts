@@ -348,20 +348,28 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     // Check if this is a late finalization message for an already cleaned-up button
     const isErrorObject = typeof messagePayload.error === "object" && messagePayload.error !== null;
     const isErrorString = typeof messagePayload.error === "string" && messagePayload.error !== "";
-    const isLateFinalization = (messagePayload.progress !== undefined && messagePayload.progress >= 101 && messagePayload.progress <= 102) ||
+
+    // Redefine isLateFinalization to include progress >= 100
+    // If buttonData is not found, and the message indicates progress at/near/beyond completion (100, 101, 102),
+    // or an explicit 'completed' flag, or an error, then it's considered a late finalization.
+    const isEffectivelyFinalProgress = messagePayload.progress !== undefined && messagePayload.progress >= 100 && messagePayload.progress <= 102;
+
+    const isLateFinalization = isEffectivelyFinalProgress || // Covers 100, 100.x, 101, 102
       messagePayload.completed === true ||
       isErrorObject || isErrorString;
 
     if (isLateFinalization) {
-      logger.logInfo(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}, but message is a late finalization. Likely already cleaned up. Message:`, JSON.parse(JSON.stringify(messagePayload)));
-      return Promise.resolve({ handled: true, reason: "Button data not found, late finalization message" });
+      // Enhanced log message for clarity
+      const lateReasonDetails = `progress: ${messagePayload.progress}, completed: ${messagePayload.completed}, error: '${messagePayload.error || "none"}'`;
+      logger.logInfo(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}. Classified as late finalization (${lateReasonDetails}). Likely already cleaned up. Message:`, JSON.parse(JSON.stringify(messagePayload)));
+      return Promise.resolve({ handled: true, reason: `Button data not found, late finalization (${lateReasonDetails})` });
     } else {
-      // It's not a finalization message, so the warning is more relevant
+      // This 'else' block will now be triggered for messages that are truly unexpected when no button data exists.
       const currentKeysForWarning = Object.keys(downloadButtons);
       let payloadStringForWarning = "<payload_serialization_error_in_warning>";
       try { payloadStringForWarning = JSON.stringify(messagePayload); } catch { /* ignore */ }
-      logger.logWarn(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}. Message: ${payloadStringForWarning}. All downloadButton keys at this point: ${currentKeysForWarning.join(",") || "none"}`);
-      return Promise.resolve({ handled: false, reason: "Button data not found for finalDownloadId" });
+      logger.logWarn(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId} (AND NOT a recognized late finalization type). Message: ${payloadStringForWarning}. All downloadButton keys at this point: ${currentKeysForWarning.join(",") || "none"}`);
+      return Promise.resolve({ handled: false, reason: "Button data not found for finalDownloadId (and not a recognized late finalization type)" });
     }
   }
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
@@ -980,7 +988,7 @@ const handleBlockRepostsConfigChange = (blockReposts: boolean) => {
       return;
     }
 
-    const payloadFile = getPathFromExtensionFile("/js/repostBlocker.js");
+    const payloadFile = getPathFromExtensionFile("/js/repostBlocker-scdl.js");
 
     if (!payloadFile) return;
 

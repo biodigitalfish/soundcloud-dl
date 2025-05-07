@@ -9,7 +9,7 @@
 (function () {
     // Use the appropriate runtime API to get the URL
     var runtimeAPI = typeof browser !== "undefined" && browser.runtime ? browser.runtime : chrome.runtime;
-    var contentScriptUrl = runtimeAPI.getURL("js/content.js");
+    var contentScriptUrl = runtimeAPI.getURL("js/content-scdl.js");
 
     // Create a script element
     var script = document.createElement("script");

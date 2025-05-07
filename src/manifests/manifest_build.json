@@ -25,8 +25,8 @@
                 "*://*.soundcloud.com/*"
             ],
             "js": [
-                "js/content-loader.js",
-                "js/bridge-content-script.js"
+                "js/content-loader-scdl.js",
+                "js/bridge-content-script-scdl.js"
             ],
             "run_at": "document_idle"
         }
@@ -51,10 +51,10 @@
         ]
     },
     "web_accessible_resources": [
-        "js/repostBlocker.js",
+        "js/repostBlocker-*.js",
         "ffmpeg-core/*",
         "js/config-*.js",
-        "js/content.js"
+        "js/content-*.js"
     ],
     "content_security_policy": "script-src 'self' 'unsafe-eval' blob: 'wasm-unsafe-eval'; object-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: https://*.soundcloud.com https://*.soundcloud.cloud https://*.sndcdn.com;",
     "browser_specific_settings": {

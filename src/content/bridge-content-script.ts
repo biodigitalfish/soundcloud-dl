@@ -17,7 +17,6 @@ window.addEventListener("message", (event) => {
     const originalMessageId = event.data.messageId; // Capture the messageId
 
     if (message && message.type && originalMessageId) { // Basic validation + check for messageId
-        console.debug(`[Bridge] Received from page for background (ID: ${originalMessageId}):`, message);
         chrome.runtime.sendMessage(message, (response) => {
             // Send response from background back to the page, including the original messageId
             if (chrome.runtime.lastError) {
@@ -29,7 +28,7 @@ window.addEventListener("message", (event) => {
                     messageId: originalMessageId // Include messageId in error response
                 }, "*");
             } else {
-                console.debug(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
+                // console.debug(`[Bridge] Received response from background for ID ${originalMessageId}, sending to page:`, response);
                 window.postMessage({
                     source: SCRIPT_ID,
                     direction: "from-background-via-bridge",

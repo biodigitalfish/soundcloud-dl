@@ -36,19 +36,22 @@ export async function createAndLoadFFmpegInstance(instanceId?: string | number):
 
         const coreJsPath = coreBaseURL + "ffmpeg-core.js";
         const coreWasmPath = coreBaseURL + "ffmpeg-core.wasm";
+        const workerJsPath = coreBaseURL + "worker.js";
 
         instanceLogger.logInfo(`[FFMPEG_WASM] Base URL for Blob: ${coreBaseURL}`);
-        instanceLogger.logInfo("[FFMPEG_WASM] Attempting to create Blob URLs for core files...");
+        instanceLogger.logInfo("[FFMPEG_WASM] Attempting to create Blob URLs for core files (including worker)...");
 
         const coreBlobURL = await toBlobURL(coreJsPath, "text/javascript");
         const wasmBlobURL = await toBlobURL(coreWasmPath, "application/wasm");
-        instanceLogger.logInfo("[FFMPEG_WASM] Blob URLs created. Loading FFmpeg instance...");
+        const workerBlobURL = await toBlobURL(workerJsPath, "text/javascript"); // For multi-threading
+        instanceLogger.logInfo("[FFMPEG_WASM] Blob URLs created. Loading FFmpeg instance with worker...");
 
         await newFfmpeg.load({
             coreURL: coreBlobURL,
             wasmURL: wasmBlobURL,
+            workerURL: workerBlobURL, // Enable multi-threading
         });
-        instanceLogger.logInfo("[FFMPEG_WASM] FFmpeg.wasm instance loaded successfully via Blob URLs.");
+        instanceLogger.logInfo("[FFMPEG_WASM] FFmpeg.wasm instance loaded successfully via Blob URLs (worker enabled).");
         return newFfmpeg;
     } catch (error) {
         instanceLogger.logError("[FFMPEG_WASM] Failed to load FFmpeg.wasm instance via Blob URLs", error);

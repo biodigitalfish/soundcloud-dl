@@ -9,6 +9,7 @@ import path from "path";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import zipPack from "vite-plugin-zip-pack";
 
 // Determine target browser from environment variable, default to firefox
 const browser = process.env.BROWSER || "firefox";
@@ -17,6 +18,8 @@ const browser = process.env.BROWSER || "firefox";
 // The manifest will be copied by viteStaticCopy below.
 
 const outputDir = path.resolve(__dirname, "dist", browser);
+const zipOutputDir = path.resolve(__dirname, "dist", "zips");
+const fileNameSuffix = "-scdl";
 
 export default defineConfig({
     plugins: [
@@ -27,7 +30,7 @@ export default defineConfig({
                 { src: "src/ui/icons/*", dest: "icons" },
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js", dest: "ffmpeg-core" },
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm", dest: "ffmpeg-core" },
-                // { src: 'node_modules/@ffmpeg/core-mt/dist/esm/ffmpeg-core.worker.js', dest: 'ffmpeg-core' }, // Uncomment if using multi-threaded version
+                { src: "node_modules/@ffmpeg/ffmpeg/dist/esm/worker.js", dest: "ffmpeg-core" },
                 {
                     src: `src/manifests/manifest_${browser === "firefox" ? "build" : "chrome"}.json`,
                     dest: ".",
@@ -36,9 +39,21 @@ export default defineConfig({
                 // Copy background.html
                 { src: "src/background/background.html", dest: "." },
                 // Copy settings.html
-                { src: "src/settings/settings.html", dest: "." }
+                { src: "src/settings/settings.html", dest: "." },
+                // Copy content-loader.js and rename it
+                {
+                    src: "src/content/content-loader.js",
+                    dest: "js",
+                    rename: "content-loader-scdl.js"
+                }
             ]
         }),
+        zipPack({
+            inDir: outputDir,
+            outDir: zipOutputDir,
+            outFileName: `soundcloud-dl-${browser}.zip`,
+            enableLogging: true
+        })
     ],
     optimizeDeps: {
         exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util"]
@@ -54,10 +69,10 @@ export default defineConfig({
     },
     build: {
         outDir: outputDir,
-        emptyOutDir: true, // Clean dist/${browser} before each build
+        emptyOutDir: true,
         target: "es2022",
-        sourcemap: true, // Consider 'hidden' for production or false to reduce size
-        minify: true, // Set to true or 'terser' for production builds
+        sourcemap: false,
+        minify: true,
         rollupOptions: {
             input: {
                 "js/background.js": path.resolve(__dirname, "src/background/background.ts"),
@@ -69,16 +84,22 @@ export default defineConfig({
             output: {
                 format: "esm",
                 entryFileNames: (chunkInfo) => {
-                    if (chunkInfo.name.endsWith(".html")) {
-                        return chunkInfo.name.replace(".html", ".js");
+                    // Handles input keys like "js/background.js" -> "js/background-scdl.js"
+                    if (chunkInfo.name.startsWith("js/") && chunkInfo.name.endsWith(".js")) {
+                        const baseName = chunkInfo.name.slice(3, -3); // Removes "js/" and ".js"
+                        return `js/${baseName}${fileNameSuffix}.js`;
                     }
+                    // Handles input keys like "js/repostBlocker" (if it were without .js in map) or other js files
                     if (chunkInfo.name.startsWith("js/")) {
-                        return chunkInfo.name;
+                        const baseName = chunkInfo.name.slice(3).replace(/\.js$/, ""); // Removes "js/" and optional ".js"
+                        return `js/${baseName}${fileNameSuffix}.js`;
                     }
-                    return "js/[name].js";
+                    // Fallback for entries not starting with "js/", if any
+                    const nameWithoutExtension = chunkInfo.name.replace(/\.[^/.]+$/, "");
+                    return `js/${nameWithoutExtension}${fileNameSuffix}.js`;
                 },
-                chunkFileNames: "js/[name]-[hash].js",
-                assetFileNames: "assets/[name]-[hash].[ext]"
+                chunkFileNames: `js/[name]${fileNameSuffix}-[hash].js`,
+                assetFileNames: `assets/[name]${fileNameSuffix}-[hash].[ext]`
             }
         }
     },

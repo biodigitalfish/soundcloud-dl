@@ -17,7 +17,7 @@
     "dev": "vite",
     "build:chrome": "cross-env BROWSER=chrome vite build",
     "build:firefox": "cross-env BROWSER=firefox vite build",
-    "build": "npm run lint && npm run build:firefox && npm run build:chrome && bash create-dist.sh",
+    "build": "npm run lint && npm run build:firefox && npm run build:chrome",
     "test": "jest",
     "lint": "eslint . --ext .ts,.js --fix"
   },
