@@ -189,7 +189,7 @@ function hideModal() {
   }
 }
 let observer = null;
-const logger = Logger.create("SoundCloud-Downloader");
+const logger = console;
 const originalSendMessageToBackend = sendMessageToBackend;
 const loggedSendMessageToBackend = (message, callContext) => {
   let messageToLog = {};
@@ -198,23 +198,15 @@ const loggedSendMessageToBackend = (message, callContext) => {
   } catch (_e) {
     messageToLog = { errorParsingMessage: true, originalType: message?.type };
   }
-  logger.logDebug(`sendMessageToBackend CALLED [Context: ${callContext || "Unknown"}] Message:`, messageToLog);
+  logger.debug(`[ContentScript sendMessageToBackend CALLED [Context: ${callContext || "Unknown"}] Message:]`, messageToLog);
   if (message && typeof message === "object") {
-    const typesRequiringId = [
-      "DOWNLOAD",
-      "DOWNLOAD_SET",
-      "DOWNLOAD_SET_RANGE",
-      "PAUSE_DOWNLOAD",
-      "RESUME_DOWNLOAD"
-    ];
+    const typesRequiringId = ["DOWNLOAD", "DOWNLOAD_SET", "DOWNLOAD_SET_RANGE", "PAUSE_DOWNLOAD", "RESUME_DOWNLOAD"];
     if (typesRequiringId.includes(message.type) && (!message.downloadId || message.downloadId === void 0 || message.downloadId === "undefined")) {
       const error = new Error(`CRITICAL: Prevented sending message with type ${message.type} and missing downloadId!`);
-      logger.logError(error.message, { message: messageToLog, callContext });
+      logger.error("[ContentScript loggedSendMessageToBackend]", error.message, { message: messageToLog, callContext });
       return Promise.reject(error);
     }
-    if (!message.timestamp) {
-      message.timestamp = Date.now();
-    }
+    if (!message.timestamp) message.timestamp = Date.now();
   }
   return originalSendMessageToBackend(message);
 };
@@ -228,56 +220,37 @@ const resetButtonBackground = (button) => {
   button.style.background = "";
   button.style.color = "";
 };
-const handleMessageFromBackgroundScript = async (_, message) => {
-  if (logger && typeof logger.logError === "function") {
-    logger.logError("[CONTENT_SCRIPT_RAW_MESSAGE_ENTRY] Message received:", JSON.parse(JSON.stringify(message || { emptyMessage: true })));
-  } else {
-    console.error("[CONTENT_SCRIPT_RAW_MESSAGE_ENTRY_CONSOLE_ERROR] Message received:", JSON.parse(JSON.stringify(message || { emptyMessageForConsole: true })));
-  }
-  const relevantKeys = [
-    "downloadId",
-    "progress",
-    "error",
-    "status",
-    "browserDownloadId",
-    "originalDownloadId",
-    // This key is added by background script in some responses
-    "completionWithoutId",
-    "completed",
-    "success",
-    // Key in ack messages from messageHandler
-    "timestamp"
-    // Common key we add
-  ];
-  const messageKeys = Object.keys(message || {});
+const handleMessageFromBackgroundScript = async (receivedSender, receivedMessagePayload) => {
+  console.error(
+    "[HANDLE_MSG_FROM_BG_ENTRY] Invoked. Sender (potentially FF internal msg):",
+    receivedSender && typeof receivedSender === "object" ? JSON.parse(JSON.stringify(receivedSender)) : receivedSender,
+    "Payload (should be our msg):",
+    receivedMessagePayload && typeof receivedMessagePayload === "object" ? JSON.parse(JSON.stringify(receivedMessagePayload)) : receivedMessagePayload
+  );
+  const relevantKeys = ["downloadId", "progress", "error", "status", "browserDownloadId", "originalDownloadId", "completionWithoutId", "completed", "success", "timestamp", "scdl_test_message"];
+  const messageKeys = Object.keys(receivedMessagePayload || {});
   const isRelevantMessage = messageKeys.some((key) => relevantKeys.includes(key));
   if (!isRelevantMessage && messageKeys.length > 0) {
-    if (message && (message.contextId || message.envType) && !messageKeys.some((k) => ["downloadId", "progress", "status"].includes(k))) {
-      logger.logDebug("Discarding known irrelevant message (e.g., context menu click) early.", { message });
-    } else {
-      logger.logDebug("Discarding message early as it lacks relevant download progress/ack keys.", { message });
-    }
+    console.warn("[HANDLE_MSG_FROM_BG] Discarding irrelevant message by key filter. Payload:", JSON.parse(JSON.stringify(receivedMessagePayload)));
     return true;
   }
-  const { downloadId: receivedDownloadIdFromPayload, progress, error, status, completionWithoutId, completed, timestamp, browserDownloadId, originalDownloadId: originalIdFromPayload } = message;
-  logger.logDebug("[CS_SUPER_EARLY_DEBUG] Relevant message payload for handleMessageFromBackgroundScript: ", JSON.parse(JSON.stringify(message)));
+  console.error("[HANDLE_MSG_FROM_BG] Relevant message PASSED initial filter. Payload:", JSON.parse(JSON.stringify(receivedMessagePayload)));
+  const { downloadId: receivedDownloadIdFromPayload, progress, error, status, completionWithoutId, completed, timestamp, browserDownloadId, originalDownloadId: originalIdFromPayload } = receivedMessagePayload;
   let finalDownloadId;
   if (originalIdFromPayload) {
     finalDownloadId = originalIdFromPayload;
-    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.originalDownloadId: ${finalDownloadId}`);
+    console.error(`[CS_FID_LOGIC] finalDownloadId set from message.originalDownloadId: ${finalDownloadId}`);
   } else if (receivedDownloadIdFromPayload) {
     finalDownloadId = receivedDownloadIdFromPayload;
-    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
+    console.error(`[CS_FID_LOGIC] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
   } else {
-    logger.logDebug("[CS_FID_LOGIC] Message has neither originalDownloadId nor downloadId at the top level of payload.");
+    console.warn("[CS_FID_LOGIC] Message has neither originalDownloadId nor downloadId at the top level of payload.");
   }
   if (!finalDownloadId && browserDownloadId) {
-    const matchedDownloadIds = Object.keys(downloadButtons).filter(
-      (id) => downloadButtons[id].browserDownloadId === browserDownloadId
-    );
+    const matchedDownloadIds = Object.keys(downloadButtons).filter((id) => downloadButtons[id].browserDownloadId === browserDownloadId);
     if (matchedDownloadIds.length === 1) {
       finalDownloadId = matchedDownloadIds[0];
-      logger.logInfo(`Matched message with browserDownloadId=${browserDownloadId} to our finalDownloadId=${finalDownloadId}`);
+      console.error(`[CS_FID_LOGIC] finalDownloadId set from browserDownloadId match: ${finalDownloadId}`);
       if (progress === 101 || completed === true) {
         const buttonData2 = downloadButtons[finalDownloadId];
         resetButtonBackground(buttonData2.elem);
@@ -287,41 +260,30 @@ const handleMessageFromBackgroundScript = async (_, message) => {
         buttonData2.elem.onclick = null;
         buttonData2.state = "Downloaded";
         buttonData2.resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-        logger.logInfo(`Updated button ${finalDownloadId} to Downloaded state from browserDownloadId match`);
+        console.error(`[CS_FID_LOGIC] Updated button ${finalDownloadId} to Downloaded state from browserDownloadId match`);
         return true;
       }
     } else if (matchedDownloadIds.length > 1) {
-      logger.logWarn(`Found multiple (${matchedDownloadIds.length}) buttons with browserDownloadId=${browserDownloadId}. Cannot reliably map message.`);
+      console.warn(`[CS_FID_LOGIC] Found multiple (${matchedDownloadIds.length}) buttons with browserDownloadId=${browserDownloadId}. Cannot reliably map message.`);
     }
   }
   if (!finalDownloadId || finalDownloadId === "undefined_completion" || completionWithoutId) {
-    logger.logWarn(
-      `[CS_GENERIC_MATCH_ENTRY] Entering generic/undefined ID matching. finalDownloadId: ${finalDownloadId}, is_undefined_completion: ${finalDownloadId === "undefined_completion"}, completionWithoutId flag: ${completionWithoutId}. Message payload:`,
-      JSON.parse(JSON.stringify(message))
-    );
+    console.warn(`[CS_GENERIC_MATCH_ENTRY] Entering generic/undefined ID matching. finalDownloadId: ${finalDownloadId}, is_undefined_completion: ${finalDownloadId === "undefined_completion"}, completionWithoutId flag: ${completionWithoutId}. Message payload:`, JSON.parse(JSON.stringify(receivedMessagePayload)));
     const allPotentiallyActiveStates = ["Downloading", "Preparing", "Finishing", "Pausing", "Resuming"];
-    const currentActiveDownloads = Object.keys(downloadButtons).filter(
-      (id) => allPotentiallyActiveStates.includes(downloadButtons[id].state)
-    );
-    const isMinimalMessage = progress === void 0 && // destructured from message
-    status === void 0 && // destructured from message
-    completed !== true && // destructured from message
-    completionWithoutId !== true && // destructured from message
-    error === void 0 && // destructured from message
-    typeof message === "object" && Object.keys(message).length <= (originalIdFromPayload ? 5 : message.type ? 2 : 1);
+    const currentActiveDownloads = Object.keys(downloadButtons).filter((id) => allPotentiallyActiveStates.includes(downloadButtons[id].state));
+    const isMinimalMessage = progress === void 0 && status === void 0 && completed !== true && completionWithoutId !== true && error === void 0 && typeof receivedMessagePayload === "object" && Object.keys(receivedMessagePayload).length <= (originalIdFromPayload ? 5 : receivedMessagePayload.type ? 2 : 1);
     if (currentActiveDownloads.length === 0 && isMinimalMessage) {
-      logger.logDebug(`Received minimal message (keys: ${Object.keys(message).join(", ") || "none"}) with no active downloads. Discarding.`, { message });
+      console.warn(`[HANDLE_MSG_FROM_BG] Received minimal message (keys: ${Object.keys(receivedMessagePayload).join(", ") || "none"}) with no active downloads. Discarding.`, { message: receivedMessagePayload });
       return true;
     }
-    logger.logWarn(`Received message (keys: ${Object.keys(message).join(", ") || "none"}) without a usable finalDownloadId or it is a generic completion. Attempting to match with active downloads (found ${currentActiveDownloads.length} using states: ${allPotentiallyActiveStates.join(", ")}).`);
-    const isCompletionMessageEvaluation = progress === 101 || progress === 102 || completed === true || completionWithoutId === true || status === void 0 && error === void 0 && // destructured from message
-    typeof message === "object" && Object.keys(message).length <= (originalIdFromPayload ? 5 : 4);
+    console.warn(`[HANDLE_MSG_FROM_BG] Received message (keys: ${Object.keys(receivedMessagePayload).join(", ") || "none"}) without a usable finalDownloadId or it is a generic completion. Attempting to match with active downloads (found ${currentActiveDownloads.length} using states: ${allPotentiallyActiveStates.join(", ")}).`);
+    const isCompletionMessageEvaluation = progress === 101 || progress === 102 || completed === true || completionWithoutId === true || status === void 0 && error === void 0 && typeof receivedMessagePayload === "object" && Object.keys(receivedMessagePayload).length <= (originalIdFromPayload ? 5 : 4);
     if (isCompletionMessageEvaluation) {
       const activeIdsForCompletionLogic = currentActiveDownloads;
-      logger.logInfo(`Attempting to match as completion message. Found ${activeIdsForCompletionLogic.length} candidates using states: ${allPotentiallyActiveStates.join(", ")}.`);
+      console.warn(`[HANDLE_MSG_FROM_BG] Attempting to match as completion message. Found ${activeIdsForCompletionLogic.length} candidates using states: ${allPotentiallyActiveStates.join(", ")}.`);
       if (activeIdsForCompletionLogic.length === 1) {
         const matchedId = activeIdsForCompletionLogic[0];
-        logger.logInfo(`Matched undefined/generic ID message to single active download: ${matchedId}`);
+        console.warn(`[HANDLE_MSG_FROM_BG] Matched undefined/generic ID message to single active download: ${matchedId}`);
         finalDownloadId = matchedId;
         const isActuallyComplete = progress === 101 || progress === 102 || completed === true || completionWithoutId === true;
         if (isActuallyComplete) {
@@ -333,7 +295,7 @@ const handleMessageFromBackgroundScript = async (_, message) => {
           buttonData2.elem.onclick = null;
           buttonData2.state = "Downloaded";
           buttonData2.resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-          logger.logInfo(`Updated button ${finalDownloadId} to Downloaded state from matched generic completion message.`);
+          console.warn(`[HANDLE_MSG_FROM_BG] Updated button ${finalDownloadId} to Downloaded state from matched generic completion message.`);
           return true;
         }
       } else if (activeIdsForCompletionLogic.length > 1 && timestamp) {
@@ -347,7 +309,7 @@ const handleMessageFromBackgroundScript = async (_, message) => {
           }
         });
         if (mostRecentId) {
-          logger.logInfo(`Matched undefined/generic ID to most recent active download by timestamp: ${mostRecentId}`);
+          console.warn(`[HANDLE_MSG_FROM_BG] Matched undefined/generic ID to most recent active download by timestamp: ${mostRecentId}`);
           finalDownloadId = mostRecentId;
           const isActuallyComplete = progress === 101 || progress === 102 || completed === true || completionWithoutId === true;
           if (isActuallyComplete) {
@@ -359,100 +321,76 @@ const handleMessageFromBackgroundScript = async (_, message) => {
             buttonData2.elem.onclick = null;
             buttonData2.state = "Downloaded";
             buttonData2.resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-            logger.logInfo(`Updated button ${finalDownloadId} to Downloaded state from timestamp-matched generic completion message.`);
+            console.warn(`[HANDLE_MSG_FROM_BG] Updated button ${finalDownloadId} to Downloaded state from timestamp-matched generic completion message.`);
             return true;
           }
         } else {
-          logger.logWarn(`Found ${activeIdsForCompletionLogic.length} active downloads, but couldn't match generic completion message by timestamp.`);
+          console.warn(`[HANDLE_MSG_FROM_BG] Found ${activeIdsForCompletionLogic.length} active downloads, but couldn't match generic completion message by timestamp.`);
         }
       } else if (activeIdsForCompletionLogic.length > 0) {
-        logger.logWarn(`Found ${activeIdsForCompletionLogic.length} active downloads, can't match generic completion message reliably by unique or timestamp.`);
+        console.warn(`[HANDLE_MSG_FROM_BG] Found ${activeIdsForCompletionLogic.length} active downloads, can't match generic completion message reliably by unique or timestamp.`);
       } else {
-        logger.logInfo("No active downloads to match generic completion message to.");
+        console.warn("[HANDLE_MSG_FROM_BG] No active downloads to match generic completion message to.");
       }
     }
     if (!finalDownloadId) {
       if (currentActiveDownloads.length === 0 && isMinimalMessage) {
-        logger.logDebug("Could not determine finalDownloadId for minimal message (no active downloads) after matching attempts. Discarding.", { message });
+        console.warn("[HANDLE_MSG_FROM_BG] Could not determine finalDownloadId for minimal message (no active downloads) after matching attempts. Discarding.", { message: receivedMessagePayload });
       } else {
-        logger.logWarn("Could not determine finalDownloadId from undefined/generic ID message after all attempts. Discarding.", { message });
+        console.warn("[HANDLE_MSG_FROM_BG] Could not determine finalDownloadId from undefined/generic ID message after all attempts. Discarding.", { message: receivedMessagePayload });
       }
       return true;
     }
   }
   if (!finalDownloadId) {
-    logger.logError("CRITICAL: finalDownloadId is null/undefined after all matching attempts. This should not happen. Discarding message.", { message });
+    console.error("[HANDLE_MSG_FROM_BG] CRITICAL: finalDownloadId is null/undefined after all matching attempts. Discarding message.", receivedMessagePayload);
     return true;
   }
   const buttonData = downloadButtons[finalDownloadId];
   if (!buttonData) {
-    logger.logWarn(`Button data not found for finalDownloadId: ${finalDownloadId}. Message:`, message);
+    console.warn(`[HANDLE_MSG_FROM_BG] Button data not found for finalDownloadId: ${finalDownloadId}. Message:`, receivedMessagePayload);
     return true;
   }
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
-  if (message.success === true && message.originalDownloadId === finalDownloadId) {
-    logger.logDebug(`[CS_DEBUG_ACK_INITIAL_MATCH] Early ack initial match for ${finalDownloadId}. Current button state: ${currentState}. Full Message:`, JSON.parse(JSON.stringify(message)));
+  console.error(`[HANDLE_MSG_FROM_BG] Processing for finalDownloadId: ${finalDownloadId}. Current button state: ${currentState}. Message progress: ${progress}, success: ${receivedMessagePayload.success}`);
+  if (receivedMessagePayload.success === true && originalIdFromPayload === finalDownloadId) {
+    console.error(`[CS_DEBUG_ACK_INITIAL_MATCH] Early ack initial match for ${finalDownloadId}. Current button state: ${currentState}. Full Message:`, JSON.parse(JSON.stringify(receivedMessagePayload)));
     if (currentState === "Preparing") {
-      logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] currentState is Preparing.");
-      if (message.progress === void 0) {
-        logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.progress is undefined.");
-        if (message.status === void 0) {
-          logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.status is undefined.");
-          if (message.completed === void 0) {
-            logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.completed is undefined.");
-            if (!message.error) {
-              logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] !message.error is true. ALL PRE-CONDITIONS FOR STATE TRANSITION MET.");
+      console.error("[CS_DEBUG_ACK_CONDITIONS] currentState is Preparing.");
+      if (progress === void 0) {
+        console.error("[CS_DEBUG_ACK_CONDITIONS] message.progress is undefined.");
+        if (status === void 0) {
+          console.error("[CS_DEBUG_ACK_CONDITIONS] message.status is undefined.");
+          if (completed === void 0) {
+            console.error("[CS_DEBUG_ACK_CONDITIONS] message.completed is undefined.");
+            if (!error) {
+              console.error("[CS_DEBUG_ACK_CONDITIONS] !message.error is true. ALL PRE-CONDITIONS FOR STATE TRANSITION MET.");
             } else {
-              logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] !message.error FAILED. Error: ${message.error}`);
+              console.warn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] !message.error FAILED. Error: ${error}`);
             }
           } else {
-            logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.completed FAILED. Was: ${message.completed}`);
+            console.warn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.completed FAILED. Was: ${completed}`);
           }
         } else {
-          logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.status FAILED. Was: ${message.status}`);
+          console.warn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.status FAILED. Was: ${status}`);
         }
       } else {
-        logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.progress FAILED. Was: ${message.progress}`);
+        console.warn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.progress FAILED. Was: ${progress}`);
       }
     } else {
-      logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] currentState was NOT Preparing. Was: ${currentState}`);
+      console.warn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] currentState was NOT Preparing. Was: ${currentState}`);
     }
   }
-  if (browserDownloadId && !buttonData.browserDownloadId) {
-    logger.logInfo(`Storing browserDownloadId=${browserDownloadId} for our finalDownloadId=${finalDownloadId}`);
-    buttonData.browserDownloadId = browserDownloadId;
-  }
-  logger.logInfo(`Button state before update: ${currentState}, finalDownloadId=${finalDownloadId}`);
-  if (message.success === true && message.originalDownloadId === finalDownloadId && currentState === "Preparing" && // Ensure we are in Preparing state
-  message.progress === void 0 && message.status === void 0 && message.completed === void 0 && !message.error) {
-    logger.logInfo(`Initial command success for ${finalDownloadId}. Transitioning to Downloading state.`);
+  if (receivedMessagePayload.success === true && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === void 0 && status === void 0 && completed === void 0 && !error) {
+    console.error(`[HANDLE_MSG_FROM_BG] Initial command success for ${finalDownloadId}. Transitioning to Downloading state.`);
     setButtonText(downloadButton, "Downloading... (Click to Pause)");
     downloadButton.style.background = "linear-gradient(90deg, #ff5419 0%, transparent 0%)";
     downloadButton.style.cursor = "pointer";
     downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
     downloadButtons[finalDownloadId].state = "Downloading";
     downloadButtons[finalDownloadId].lastProgressTime = Date.now();
-  }
-  if (progress !== void 0 || status !== void 0) {
-    downloadButtons[finalDownloadId].lastProgressTime = Date.now();
-  }
-  if (resetTimer) {
-    clearTimeout(resetTimer);
-    downloadButtons[finalDownloadId].resetTimer = void 0;
-  }
-  if (completed === true || message.finalBackup === true) {
-    logger.logInfo(`Download complete (explicit completion flag) for finalDownloadId=${finalDownloadId}`);
-    resetButtonBackground(downloadButton);
-    downloadButton.style.backgroundColor = "#19a352";
-    setButtonText(downloadButton, "Downloaded!");
-    downloadButton.title = "Downloaded successfully";
-    downloadButton.onclick = null;
-    downloadButtons[finalDownloadId].state = "Downloaded";
-    downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-    logger.logInfo(`Button state updated to Downloaded due to explicit flag, finalDownloadId=${finalDownloadId}`);
-    return true;
   } else if (progress === 101) {
-    logger.logInfo(`Download complete (101) for finalDownloadId=${finalDownloadId}`);
+    console.error(`[HANDLE_MSG_FROM_BG] Download complete (101) for finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);
     downloadButton.style.backgroundColor = "#19a352";
     setButtonText(downloadButton, "Downloaded!");
@@ -460,10 +398,8 @@ const handleMessageFromBackgroundScript = async (_, message) => {
     downloadButton.onclick = null;
     downloadButtons[finalDownloadId].state = "Downloaded";
     downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-    logger.logInfo(`Button state updated to Downloaded, finalDownloadId=${finalDownloadId}`);
-    return true;
   } else if (progress === 102) {
-    logger.logInfo(`Download complete with errors (102) for finalDownloadId=${finalDownloadId}`);
+    console.error(`[HANDLE_MSG_FROM_BG] Download complete with errors (102) for finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);
     downloadButton.style.backgroundColor = "gold";
     downloadButton.style.color = "#333";
@@ -472,106 +408,60 @@ const handleMessageFromBackgroundScript = async (_, message) => {
     downloadButton.onclick = null;
     downloadButtons[finalDownloadId].state = "Downloaded";
     downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-    logger.logInfo(`Button state updated to Downloaded (with errors), finalDownloadId=${finalDownloadId}`);
-    return true;
-  }
-  if (status === "Paused") {
+  } else if (status === "Paused") {
+    console.error(`[HANDLE_MSG_FROM_BG] Button state updated to Paused, finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);
     setButtonText(downloadButton, "Paused (Click to Resume)");
     downloadButton.style.cursor = "pointer";
     downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
     downloadButtons[finalDownloadId].state = "Paused";
-    logger.logInfo(`Button state updated to Paused, finalDownloadId=${finalDownloadId}`);
   } else if (status === "Resuming") {
+    console.error(`[HANDLE_MSG_FROM_BG] Button state updated to Resuming, finalDownloadId=${finalDownloadId}`);
     setButtonText(downloadButton, "Resuming...");
     downloadButton.style.cursor = "default";
     downloadButton.onclick = null;
     downloadButtons[finalDownloadId].state = "Resuming";
-    logger.logInfo(`Button state updated to Resuming, finalDownloadId=${finalDownloadId}`);
   } else if (progress === 100) {
     if (currentState !== "Paused" && currentState !== "Pausing" && currentState !== "Resuming") {
+      console.error(`[HANDLE_MSG_FROM_BG] Button state updated to Finishing, finalDownloadId=${finalDownloadId}`);
       setButtonText(downloadButton, "Finishing...");
       downloadButton.style.background = "linear-gradient(90deg, #ff5419 100%, transparent 0%)";
       downloadButton.onclick = null;
       downloadButtons[finalDownloadId].state = "Finishing";
-      logger.logInfo(`Button state updated to Finishing, finalDownloadId=${finalDownloadId}`);
     }
   } else if (progress !== void 0 && progress >= 0 && progress < 100) {
-    if (currentState === "Preparing" || currentState !== "Paused" && currentState !== "Pausing") {
-      setButtonText(downloadButton, "Downloading... (Click to Pause)");
-      downloadButton.style.background = `linear-gradient(90deg, #ff5419 ${progress}%, transparent 0%)`;
-      downloadButton.style.cursor = "pointer";
-      downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
-      downloadButtons[finalDownloadId].state = "Downloading";
-      logger.logInfo(`Button state updated to Downloading (${progress}%), finalDownloadId=${finalDownloadId}`);
-    }
+    console.error(`[HANDLE_MSG_FROM_BG] Button state updated to Downloading (${progress}%), finalDownloadId=${finalDownloadId}`);
+    setButtonText(downloadButton, "Downloading... (Click to Pause)");
+    downloadButton.style.background = `linear-gradient(90deg, #ff5419 ${progress}%, transparent 0%)`;
+    downloadButton.style.cursor = "pointer";
+    downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
+    downloadButtons[finalDownloadId].state = "Downloading";
   } else if (error) {
+    console.error(`[HANDLE_MSG_FROM_BG] Button state updated to Error: ${error}, finalDownloadId=${finalDownloadId}`);
     resetButtonBackground(downloadButton);
     downloadButton.style.backgroundColor = "#d30029";
     setButtonText(downloadButton, "ERROR", error);
     downloadButton.onclick = null;
     downloadButtons[finalDownloadId].state = "Error";
-    logger.logInfo(`Button state updated to Error: ${error}, finalDownloadId=${finalDownloadId}`);
   } else if (currentState === "Preparing" && progress !== void 0) {
+    console.error(`[HANDLE_MSG_FROM_BG] Button state forcibly updated from Preparing to Downloading, finalDownloadId=${finalDownloadId}`);
     setButtonText(downloadButton, "Downloading... (Click to Pause)");
     downloadButton.style.background = "linear-gradient(90deg, #ff5419 " + (progress || 0) + "%, transparent 0%)";
     downloadButton.style.cursor = "pointer";
     downloadButton.onclick = createPauseResumeHandler(finalDownloadId);
     downloadButtons[finalDownloadId].state = "Downloading";
-    logger.logInfo(`Button state forcibly updated from Preparing to Downloading, finalDownloadId=${finalDownloadId}`);
-  } else if (currentState === "Downloading" && !progress && !status && !error) {
-    logger.logInfo(`Received ambiguous message for download ${finalDownloadId} in Downloading state`);
-    const messageStr = JSON.stringify(message).toLowerCase();
-    if (messageStr.includes("finish") || messageStr.includes("complet")) {
-      logger.logInfo(`Interpreting ambiguous message as completion for finalDownloadId=${finalDownloadId}`);
-      resetButtonBackground(downloadButton);
-      downloadButton.style.backgroundColor = "#19a352";
-      setButtonText(downloadButton, "Downloaded!");
-      downloadButton.title = "Downloaded successfully";
-      downloadButton.onclick = null;
-      downloadButtons[finalDownloadId].state = "Downloaded";
-      downloadButtons[finalDownloadId].resetTimer = window.setTimeout(() => runResetLogic(finalDownloadId), 1e4);
-    }
+  } else {
+    console.warn("[HANDLE_MSG_FROM_BG] Message passed all filters but did not match any specific state update logic. Payload:", JSON.parse(JSON.stringify(receivedMessagePayload)));
   }
   return true;
 };
-logger.logError("[CONTENT_SCRIPT_LISTENER_SETUP] Attempting to set up onMessage listener NOW.");
-const scdlMessageListener = async (senderOrContext, messageOrPayload) => {
-  let actualPayload = messageOrPayload;
-  let actualSender = senderOrContext;
-  if (messageOrPayload && (messageOrPayload.contextId || messageOrPayload.envType) && senderOrContext && (typeof senderOrContext.downloadId !== "undefined" || typeof senderOrContext.originalDownloadId !== "undefined" || typeof senderOrContext.success !== "undefined" || typeof senderOrContext.progress !== "undefined")) {
-    const logMessage = "[CONTENT_SCRIPT_LISTENER_FIRED] Detected Firefox MV2 message misattribution. Using first argument (senderOrContext) as payload.";
-    if (typeof logger !== "undefined" && logger && typeof logger.logError === "function") {
-      logger.logError(
-        logMessage,
-        "Original first arg (senderOrContext, now payload):",
-        JSON.parse(JSON.stringify(senderOrContext)),
-        "Original second arg (messageOrPayload, now sender):",
-        JSON.parse(JSON.stringify(messageOrPayload))
-      );
-    } else {
-      console.error(
-        logMessage,
-        "Original first arg (senderOrContext, now payload):",
-        JSON.parse(JSON.stringify(senderOrContext)),
-        "Original second arg (messageOrPayload, now sender):",
-        JSON.parse(JSON.stringify(messageOrPayload))
-      );
-    }
-    actualPayload = senderOrContext;
-    actualSender = messageOrPayload;
-  } else {
-    const logMessage = "[CONTENT_SCRIPT_LISTENER_FIRED] Standard message processing.";
-    if (typeof logger !== "undefined" && logger && typeof logger.logError === "function") {
-      logger.logError(logMessage, "Arg1 (sender/context):", JSON.parse(JSON.stringify(senderOrContext || {})), "Arg2 (message/payload):", JSON.parse(JSON.stringify(messageOrPayload || {})));
-    } else {
-      console.error(logMessage, "Arg1 (sender/context):", JSON.parse(JSON.stringify(senderOrContext || {})), "Arg2 (message/payload):", JSON.parse(JSON.stringify(messageOrPayload || {})));
-    }
-  }
-  return handleMessageFromBackgroundScript(actualSender, actualPayload);
-};
-onMessage(scdlMessageListener);
-logger.logError(`[CONTENT_SCRIPT_LISTENER_SETUP] onMessage listener setup complete. Document readyState: ${document.readyState}`);
+console.error("[CONTENT_SCRIPT_LISTENER_SETUP] Attempting to set up onMessage listener NOW.");
+if (typeof onMessage !== "undefined") {
+  onMessage(handleMessageFromBackgroundScript);
+  console.error(`[CONTENT_SCRIPT_LISTENER_SETUP] onMessage listener setup complete. Document readyState: ${document.readyState}`);
+} else {
+  console.error("[CONTENT_SCRIPT_SETUP_ERROR] onMessage utility is not defined!");
+}
 const createDownloadButton = (small) => {
   const button = document.createElement("button");
   const buttonSizeClass = small ? "sc-button-small" : "sc-button-medium";
@@ -581,10 +471,10 @@ const createDownloadButton = (small) => {
 };
 const createDownloadCommand = (url) => {
   const isSetUrl = url.includes("/sets/") || url.includes("/albums/");
-  logger.logDebug(`createDownloadCommand: URL=${url}, isSetUrl=${isSetUrl}`, { url, isSetUrl });
+  console.debug(`createDownloadCommand: URL=${url}, isSetUrl=${isSetUrl}`, { url, isSetUrl });
   const command = (downloadId) => {
     if (!downloadId) {
-      logger.logError("Attempted to send DOWNLOAD command with undefined/empty downloadId", { url });
+      console.error("Attempted to send DOWNLOAD command with undefined/empty downloadId", { url });
       return Promise.reject("Undefined/empty downloadId for DOWNLOAD command");
     }
     return loggedSendMessageToBackend({
@@ -596,23 +486,23 @@ const createDownloadCommand = (url) => {
   };
   command.url = url;
   command.isSet = isSetUrl;
-  logger.logDebug(`createDownloadCommand: Created command with isSet=${command.isSet}`, { commandUrl: command.url, isSet: command.isSet });
+  console.debug(`createDownloadCommand: Created command with isSet=${command.isSet}`, { commandUrl: command.url, isSet: command.isSet });
   return command;
 };
 const addDownloadButtonToParent = (parent, onClicked, small) => {
   const downloadButtonExists = parent.querySelector("button.sc-button-download") !== null;
   if (downloadButtonExists) {
-    logger.logDebug("Download button already exists");
+    console.debug("Download button already exists");
     return;
   }
-  logger.logDebug("Adding download button", {
+  console.debug("Adding download button", {
     parentNode: parent.nodeName,
     url: onClicked.url,
     isSet: onClicked.isSet
   });
   const button = createDownloadButton(small);
   const downloadUrl = onClicked.url;
-  logger.logInfo(`Button created with URL: ${downloadUrl}`);
+  console.info(`Button created with URL: ${downloadUrl}`);
   const originalOnClick = async () => {
     const downloadId = crypto.randomUUID();
     downloadButtons[downloadId] = {
@@ -625,7 +515,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
       lastProgressTime: Date.now()
       // Add timestamp for progress tracking
     };
-    logger.logInfo(`Button clicked with downloadId: ${downloadId}, URL: ${downloadUrl}`);
+    console.info(`Button clicked with downloadId: ${downloadId}, URL: ${downloadUrl}`);
     button.style.cursor = "default";
     button.onclick = null;
     setButtonText(button, "Preparing...");
@@ -633,7 +523,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
     const safetyTimeout = setTimeout(() => {
       const currentButtonData = downloadButtons[downloadId];
       if (currentButtonData && currentButtonData.state === "Preparing") {
-        logger.logWarn(`Safety timeout triggered for downloadId=${downloadId}, button still in Preparing state`);
+        console.warn(`Safety timeout triggered for downloadId=${downloadId}, button still in Preparing state`);
         setButtonText(button, "Click to retry");
         button.style.cursor = "pointer";
         button.onclick = originalOnClick;
@@ -646,9 +536,9 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
         const lastProgressTime = currentButtonData.lastProgressTime || 0;
         const timeSinceLastProgress = Date.now() - lastProgressTime;
         if (timeSinceLastProgress > 12e4) {
-          logger.logWarn(`Completion safety timeout triggered for downloadId=${downloadId}. Download seems stuck in Downloading state for ${timeSinceLastProgress / 1e3}s`);
+          console.warn(`Completion safety timeout triggered for downloadId=${downloadId}. Download seems stuck in Downloading state for ${timeSinceLastProgress / 1e3}s`);
           if (timeSinceLastProgress > 18e4) {
-            logger.logInfo(`Assuming potential silent completion for downloadId=${downloadId}`);
+            console.info(`Assuming potential silent completion for downloadId=${downloadId}`);
             resetButtonBackground(button);
             button.style.backgroundColor = "#19a352";
             setButtonText(button, "Downloaded!");
@@ -657,7 +547,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
             downloadButtons[downloadId].state = "Downloaded";
             downloadButtons[downloadId].resetTimer = window.setTimeout(() => runResetLogic(downloadId), 1e4);
           } else {
-            logger.logInfo(`Marking download ${downloadId} as potentially stuck`);
+            console.info(`Marking download ${downloadId} as potentially stuck`);
             setButtonText(button, "Downloading... (may be stuck)");
           }
         }
@@ -665,11 +555,11 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
     }, 3e5);
     try {
       const response = await onClicked(downloadId);
-      logger.logInfo(`Download command response for ${downloadId}:`, response);
+      console.info(`Download command response for ${downloadId}:`, response);
       clearTimeout(safetyTimeout);
       const currentButtonData = downloadButtons[downloadId];
       if (currentButtonData && currentButtonData.state === "Preparing") {
-        logger.logInfo(`Manually transitioning button from Preparing to Downloading state for ${downloadId}`);
+        console.info(`Manually transitioning button from Preparing to Downloading state for ${downloadId}`);
         setButtonText(button, "Downloading... (Click to Pause)");
         button.style.background = "linear-gradient(90deg, #ff5419 0%, transparent 0%)";
         button.style.cursor = "pointer";
@@ -680,7 +570,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
     } catch (err) {
       clearTimeout(safetyTimeout);
       clearTimeout(completionTimeout);
-      logger.logError(`Initial download command failed for ${downloadUrl}`, err);
+      console.error(`Initial download command failed for ${downloadUrl}`, err);
       if (downloadButtons[downloadId]) {
         downloadButtons[downloadId].state = "Error";
         setButtonText(button, "ERROR", err.message || "Failed to start");
@@ -716,7 +606,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
   button.onclick = originalOnClick;
   parent.appendChild(button);
   const isSet = onClicked.isSet;
-  logger.logInfo("Checking if should add range button:", {
+  console.info("Checking if should add range button:", {
     isSet,
     url: onClicked.url,
     urlIncludes: {
@@ -728,14 +618,14 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
   if (!isSet && typeof browser !== "undefined" && onClicked.url) {
     const url = onClicked.url;
     if (url.includes("/sets/") || url.includes("/albums/")) {
-      logger.logInfo("Firefox detected, forcing isSet=true for URL:", url);
+      console.info("Firefox detected, forcing isSet=true for URL:", url);
       onClicked.isSet = true;
     }
   }
   const finalIsSet = onClicked.isSet;
   if (finalIsSet) {
     const rangeButton = document.createElement("button");
-    logger.logInfo("Creating range button for URL=" + (onClicked.url || "unknown"));
+    console.info("Creating range button for URL=" + (onClicked.url || "unknown"));
     const rangeButtonSizeClass = small ? "sc-button-small" : "sc-button-medium";
     rangeButton.className = `sc-button-range sc-button ${rangeButtonSizeClass} sc-button-responsive`;
     rangeButton.textContent = "Range...";
@@ -755,18 +645,18 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
         lastProgressTime: Date.now()
         // Add timestamp for progress tracking
       };
-      logger.logInfo(`Range button clicked. Created preDownloadId: ${preDownloadId}, with URL: ${downloadUrl}`);
+      console.info(`Range button clicked. Created preDownloadId: ${preDownloadId}, with URL: ${downloadUrl}`);
       const handleRangeDownload = (start, end) => {
         const mainButtonId = preDownloadId;
-        logger.logInfo(`Range download handler called with start=${start}, end=${end}, mainButtonId=${mainButtonId}`);
+        console.info(`Range download handler called with start=${start}, end=${end}, mainButtonId=${mainButtonId}`);
         const buttonData = downloadButtons[mainButtonId];
-        logger.logInfo("Button data for range download:", {
+        console.info("Button data for range download:", {
           hasButtonData: !!buttonData,
           originalUrl: buttonData?.originalUrl,
           state: buttonData?.state
         });
         if (!buttonData || !buttonData.originalUrl) {
-          logger.logError(`Range download failed: No button data or URL for ID ${mainButtonId}`);
+          console.error(`Range download failed: No button data or URL for ID ${mainButtonId}`);
           const errorDiv = document.getElementById("scdl-range-modal-error");
           if (errorDiv) {
             errorDiv.textContent = "Error: Could not get original URL for the playlist.";
@@ -781,7 +671,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
         buttonData.lastProgressTime = Date.now();
         const safetyTimeout = setTimeout(() => {
           if (downloadButtons[mainButtonId] && downloadButtons[mainButtonId].state === "Preparing") {
-            logger.logWarn(`Safety timeout triggered for range download with ID ${mainButtonId}`);
+            console.warn(`Safety timeout triggered for range download with ID ${mainButtonId}`);
             setButtonText(buttonData.elem, "Range download timed out. Click to retry.");
             buttonData.elem.style.cursor = "pointer";
             buttonData.elem.onclick = originalOnClick;
@@ -794,9 +684,9 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
             const lastProgressTime = currentButtonData.lastProgressTime || 0;
             const timeSinceLastProgress = Date.now() - lastProgressTime;
             if (timeSinceLastProgress > 3e5) {
-              logger.logWarn(`Range download completion safety timeout triggered for ID ${mainButtonId}. Download seems stuck for ${timeSinceLastProgress / 1e3}s`);
+              console.warn(`Range download completion safety timeout triggered for ID ${mainButtonId}. Download seems stuck for ${timeSinceLastProgress / 1e3}s`);
               if (timeSinceLastProgress > 6e5) {
-                logger.logInfo(`Assuming potential silent completion for range download ${mainButtonId}`);
+                console.info(`Assuming potential silent completion for range download ${mainButtonId}`);
                 resetButtonBackground(buttonData.elem);
                 buttonData.elem.style.backgroundColor = "#19a352";
                 setButtonText(buttonData.elem, "Downloaded!");
@@ -805,13 +695,13 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
                 downloadButtons[mainButtonId].state = "Downloaded";
                 downloadButtons[mainButtonId].resetTimer = window.setTimeout(() => runResetLogic(mainButtonId), 1e4);
               } else {
-                logger.logInfo(`Marking range download ${mainButtonId} as potentially stuck`);
+                console.info(`Marking range download ${mainButtonId} as potentially stuck`);
                 setButtonText(buttonData.elem, "Downloading range... (may be stuck)");
               }
             }
           }
         }, 6e5);
-        logger.logInfo("Sending range download message:", {
+        console.info("Sending range download message:", {
           type: "DOWNLOAD_SET_RANGE",
           url: buttonData.originalUrl,
           start,
@@ -826,9 +716,9 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
           downloadId: mainButtonId
         }, "handleRangeDownload").then((response) => {
           clearTimeout(safetyTimeout);
-          logger.logInfo("Range download response:", response);
+          console.info("Range download response:", response);
           if (downloadButtons[mainButtonId] && downloadButtons[mainButtonId].state === "Preparing") {
-            logger.logInfo(`Manually transitioning range button from Preparing to Downloading state for ${mainButtonId}`);
+            console.info(`Manually transitioning range button from Preparing to Downloading state for ${mainButtonId}`);
             setButtonText(buttonData.elem, "Downloading... (Click to Pause)");
             buttonData.elem.style.background = "linear-gradient(90deg, #ff5419 0%, transparent 0%)";
             buttonData.elem.style.cursor = "pointer";
@@ -839,7 +729,7 @@ const addDownloadButtonToParent = (parent, onClicked, small) => {
         }).catch((error) => {
           clearTimeout(safetyTimeout);
           clearTimeout(completionTimeout);
-          logger.logError("Range download request failed:", error);
+          console.error("Range download request failed:", error);
           if (downloadButtons[mainButtonId]) {
             resetButtonBackground(buttonData.elem);
             buttonData.elem.style.backgroundColor = "#d30029";
@@ -878,9 +768,9 @@ const removeDownloadButtons = () => {
 };
 const addDownloadButtonToTrackPage = () => {
   const selector = ".sc-button-group-medium > .sc-button-like";
-  logger.logDebug(`[TrackPage] Querying for selector: ${selector}`);
+  console.debug(`[TrackPage] Querying for selector: ${selector}`);
   const addDownloadButtonToPossiblePlaylist = (node) => {
-    logger.logDebug("[TrackPage] Found node matching selector:", node);
+    console.debug("[TrackPage] Found node matching selector:", node);
     const downloadUrl = window.location.origin + window.location.pathname;
     const downloadCommand = createDownloadCommand(downloadUrl);
     addDownloadButtonToParent(node.parentNode, downloadCommand, false);
@@ -891,13 +781,13 @@ const addDownloadButtonToTrackPage = () => {
     callback: addDownloadButtonToPossiblePlaylist
   };
   observer?.addEvent(event);
-  logger.logDebug(`[TrackPage] Initial elements found: ${document.querySelectorAll(selector).length}`);
+  console.debug(`[TrackPage] Initial elements found: ${document.querySelectorAll(selector).length}`);
 };
 const addDownloadButtonToFeed = () => {
   const selector = ".sound.streamContext .sc-button-group > .sc-button-like";
-  logger.logDebug(`[Feed] Querying for selector: ${selector}`);
+  console.debug(`[Feed] Querying for selector: ${selector}`);
   const addDownloadButtonToPossiblePlaylist = (node) => {
-    logger.logDebug("[Feed] Found node matching selector:", node);
+    console.debug("[Feed] Found node matching selector:", node);
     const soundBody = node.parentElement.closest(".sound__body");
     const titleLink = soundBody.querySelector("a.soundTitle__title");
     if (titleLink === null) {
@@ -913,18 +803,18 @@ const addDownloadButtonToFeed = () => {
     callback: addDownloadButtonToPossiblePlaylist
   };
   observer?.addEvent(event);
-  logger.logDebug(`[Feed] Initial elements found: ${document.querySelectorAll(selector).length}`);
+  console.debug(`[Feed] Initial elements found: ${document.querySelectorAll(selector).length}`);
 };
 const handleBlockRepostsConfigChange = (blockReposts) => {
   let script = document.querySelector("#repost-blocker");
   if (blockReposts) {
     if (script) {
-      logger.logWarn("Repost-Blocker script has already been injected!");
+      console.warn("Repost-Blocker script has already been injected!");
       return;
     }
     const payloadFile = getPathFromExtensionFile("/js/repostBlocker.js");
     if (!payloadFile) return;
-    logger.logInfo("Start blocking reposts");
+    console.info("Start blocking reposts");
     script = document.createElement("script");
     script.type = "text/javascript";
     script.id = "repost-blocker";
@@ -932,7 +822,7 @@ const handleBlockRepostsConfigChange = (blockReposts) => {
     document.documentElement.appendChild(script);
   } else {
     if (!script) return;
-    logger.logInfo("Stop blocking reposts");
+    console.info("Stop blocking reposts");
     const cleanupScript = document.createElement("script");
     cleanupScript.type = "text/javascript";
     cleanupScript.id = "cleanup-repost-blocker";
@@ -943,7 +833,7 @@ const handleBlockRepostsConfigChange = (blockReposts) => {
   }
 };
 const handlePageLoaded = async () => {
-  logger.logInfo("handlePageLoaded executing...");
+  console.info("handlePageLoaded executing...");
   observer = new DomObserver();
   removeBuyLinks();
   removeDownloadButtons();
@@ -951,16 +841,16 @@ const handlePageLoaded = async () => {
   addDownloadButtonToFeed();
   addDownloadButtonToPlaylistPage();
   observer.start(document.body);
-  logger.logInfo("Attached!");
+  console.info("Attached!");
 };
 const addDownloadButtonToPlaylistPage = () => {
-  logger.logInfo("[PlaylistPage] Running playlist button initialization");
+  console.info("[PlaylistPage] Running playlist button initialization");
   const isPlaylistPage = window.location.pathname.includes("/sets/") || window.location.pathname.includes("/albums/") || document.querySelector(".setTrackList") !== null;
   if (!isPlaylistPage) {
-    logger.logDebug("[PlaylistPage] Not on a playlist page, skipping");
+    console.debug("[PlaylistPage] Not on a playlist page, skipping");
     return;
   }
-  logger.logInfo("[PlaylistPage] Detected playlist page, adding download button");
+  console.info("[PlaylistPage] Detected playlist page, adding download button");
   const possibleSelectors = [
     // Track list header
     ".soundActions .sc-button-group",
@@ -975,45 +865,45 @@ const addDownloadButtonToPlaylistPage = () => {
   ];
   for (const selector of possibleSelectors) {
     const elements = document.querySelectorAll(selector);
-    logger.logDebug(`[PlaylistPage] Found ${elements.length} elements matching "${selector}"`);
+    console.debug(`[PlaylistPage] Found ${elements.length} elements matching "${selector}"`);
   }
   let buttonParent = null;
   for (const selector of possibleSelectors) {
     const element = document.querySelector(selector);
     if (element) {
       buttonParent = element;
-      logger.logInfo(`[PlaylistPage] Found button parent: ${selector}`);
+      console.info(`[PlaylistPage] Found button parent: ${selector}`);
       break;
     }
   }
   if (!buttonParent) {
-    logger.logWarn("[PlaylistPage] No direct button parent found, trying alternative approach");
+    console.warn("[PlaylistPage] No direct button parent found, trying alternative approach");
     const playlistContainer = document.querySelector(".trackList") || document.querySelector(".setTrackList");
     if (playlistContainer) {
       const existingButton = document.querySelector(".sc-button-like") || document.querySelector(".sc-button-share") || document.querySelector(".sc-button-play");
       if (existingButton && existingButton.parentNode) {
         buttonParent = existingButton.parentNode;
-        logger.logInfo("[PlaylistPage] Found button parent via existing button", buttonParent);
+        console.info("[PlaylistPage] Found button parent via existing button", buttonParent);
       } else {
         const tracklistHeader = playlistContainer.querySelector(".tracklistHeader") || playlistContainer.querySelector(".setTrackList__header");
         if (tracklistHeader) {
           buttonParent = document.createElement("div");
           buttonParent.className = "sc-button-group sc-button-group-medium";
           tracklistHeader.appendChild(buttonParent);
-          logger.logInfo("[PlaylistPage] Created custom button parent in tracklist header");
+          console.info("[PlaylistPage] Created custom button parent in tracklist header");
         }
       }
     }
   }
   if (buttonParent) {
     const downloadUrl = window.location.origin + window.location.pathname;
-    logger.logInfo(`[PlaylistPage] Creating download command for: ${downloadUrl}`);
+    console.info(`[PlaylistPage] Creating download command for: ${downloadUrl}`);
     const command = createDownloadCommand(downloadUrl);
     command.isSet = true;
-    logger.logInfo("[PlaylistPage] Adding download button to parent:", buttonParent);
+    console.info("[PlaylistPage] Adding download button to parent:", buttonParent);
     addDownloadButtonToParent(buttonParent, command, false);
   } else {
-    logger.logError("[PlaylistPage] Could not find or create button parent for playlist page");
+    console.error("[PlaylistPage] Could not find or create button parent for playlist page");
   }
 };
 const documentState = document.readyState;
@@ -1030,7 +920,7 @@ function startStuckDownloadChecker() {
     const now = Date.now();
     const activeDownloadIds = Object.keys(downloadButtons);
     if (activeDownloadIds.length === 0) return;
-    logger.logDebug(`Running stuck download check for ${activeDownloadIds.length} active downloads`);
+    console.debug(`Running stuck download check for ${activeDownloadIds.length} active downloads`);
     activeDownloadIds.forEach((downloadId) => {
       const buttonData = downloadButtons[downloadId];
       if (!buttonData) return;
@@ -1038,12 +928,11 @@ function startStuckDownloadChecker() {
         const lastProgressTime = buttonData.lastProgressTime || 0;
         const idleTime = now - lastProgressTime;
         if (idleTime > 3e5) {
-          logger.logWarn(`Download ${downloadId} has been idle for ${Math.floor(idleTime / 1e3)}s`);
+          console.warn(`Download ${downloadId} has been idle for ${Math.floor(idleTime / 1e3)}s`);
           if (idleTime > 6e5) {
-            logger.logInfo(`Auto-completing download ${downloadId} due to long inactivity (${Math.floor(idleTime / 1e3)}s)`);
+            console.info(`Auto-completing download ${downloadId} due to long inactivity (${Math.floor(idleTime / 1e3)}s)`);
             resetButtonBackground(buttonData.elem);
             buttonData.elem.style.backgroundColor = "#19a352";
-            setButtonText(buttonData.elem, "Downloaded!");
             buttonData.elem.title = "Download likely completed (auto-detected)";
             buttonData.elem.onclick = null;
             buttonData.state = "Downloaded";
@@ -1059,19 +948,19 @@ function startStuckDownloadChecker() {
       }
     });
   }, 6e4);
-  logger.logInfo("Started automatic stuck download checker");
+  console.info("Started automatic stuck download checker");
 }
 function stopStuckDownloadChecker() {
   if (stuckDownloadCheckInterval !== null) {
     clearInterval(stuckDownloadCheckInterval);
     stuckDownloadCheckInterval = null;
-    logger.logInfo("Stopped automatic stuck download checker");
+    console.info("Stopped automatic stuck download checker");
   }
 }
 window.onbeforeunload = () => {
   observer?.stop();
   stopStuckDownloadChecker();
-  logger.logDebug("Unattached!");
+  console.info("Unattached!");
 };
 function initializeDownloadCheckers() {
   startStuckDownloadChecker();
@@ -1099,11 +988,11 @@ const createPauseResumeHandler = (downloadId) => {
   return async () => {
     const buttonData = downloadButtons[downloadId];
     if (!buttonData) {
-      logger.logWarn(`Pause/Resume: Button data not found for downloadId: ${downloadId}`);
+      console.warn(`Pause/Resume: Button data not found for downloadId: ${downloadId}`);
       return;
     }
     if (!downloadId) {
-      logger.logError("Attempted to send PAUSE/RESUME command with undefined/empty downloadId.");
+      console.error("Attempted to send PAUSE/RESUME command with undefined/empty downloadId.");
       return;
     }
     if (buttonData.state === "Downloading" || buttonData.state === "Resuming") {
@@ -1143,14 +1032,14 @@ function startDebugLogging() {
   debugIntervalId = window.setInterval(() => {
     const activeDownloadIds = Object.keys(downloadButtons);
     if (activeDownloadIds.length === 0) return;
-    logger.logDebug(`DEBUG: Currently tracking ${activeDownloadIds.length} active downloads`);
+    console.debug(`DEBUG: Currently tracking ${activeDownloadIds.length} active downloads`);
     activeDownloadIds.forEach((downloadId) => {
       const buttonData = downloadButtons[downloadId];
       if (!buttonData) return;
-      logger.logDebug(`DEBUG: Download ${downloadId} - State=${buttonData.state}, browserDownloadId=${buttonData.browserDownloadId || "none"}, lastProgress=${buttonData.lastProgressTime ? new Date(buttonData.lastProgressTime).toISOString() : "none"}`);
+      console.debug(`DEBUG: Download ${downloadId} - State=${buttonData.state}, browserDownloadId=${buttonData.browserDownloadId || "none"}, lastProgress=${buttonData.lastProgressTime ? new Date(buttonData.lastProgressTime).toISOString() : "none"}`);
     });
   }, 1e4);
-  logger.logInfo("Started debug logging for downloads");
+  console.info("Started debug logging for downloads");
 }
 if (documentState === "complete" || documentState === "interactive") {
   setTimeout(startDebugLogging, 2e3);
