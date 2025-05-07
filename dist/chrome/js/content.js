@@ -1,5 +1,5 @@
 import { L as Logger } from "./logger-DNjPuH99.js";
-import { p as onMessage, o as loadConfiguration, z as configKeys, u as registerConfigChangeHandler, g as getPathFromExtensionFile, B as sendMessageToBackend, C as determineIfUrlIsSet, D as setOnConfigValueChanged } from "./config-CAI3Vpb8.js";
+import { q as onMessage, m as configKeys, B as sendMessageToBackend, g as getPathFromExtensionFile, C as determineIfUrlIsSet } from "./config-CmaCATSF.js";
 class DomObserver {
   observer;
   events = [];
@@ -222,12 +222,19 @@ const resetButtonBackground = (button) => {
   button.style.color = "";
 };
 const handleMessageFromBackgroundScript = (messagePayload, sender) => {
-  logger.logDebug(
-    "[HANDLE_MSG_FROM_BG_ENTRY] Invoked. Sender (potentially FF internal msg):",
-    sender && typeof sender === "object" ? JSON.parse(JSON.stringify(sender)) : sender,
-    "Payload (should be our msg):",
-    messagePayload && typeof messagePayload === "object" ? JSON.parse(JSON.stringify(messagePayload)) : messagePayload
-  );
+  const uniqueCallId = crypto.randomUUID().substring(0, 8);
+  const currentButtonKeys = Object.keys(downloadButtons);
+  let payloadString = "<payload_serialization_error>";
+  try {
+    payloadString = JSON.stringify(messagePayload);
+  } catch {
+  }
+  let senderString = "<sender_serialization_error>";
+  try {
+    senderString = JSON.stringify(sender);
+  } catch {
+  }
+  logger.logDebug(`[HANDLE_MSG_FROM_BG_ENTRY_POINT CALL_ID: ${uniqueCallId}] Invoked. Payload: ${payloadString}. Sender: ${senderString}. Current downloadButton keys: ${currentButtonKeys.join(",") || "none"}`);
   const relevantKeys = ["downloadId", "progress", "error", "status", "browserDownloadId", "originalDownloadId", "completionWithoutId", "completed", "success", "timestamp", "scdl_test_message"];
   const messageKeys = Object.keys(messagePayload || {});
   const isRelevantMessage = messageKeys.some((key) => relevantKeys.includes(key));
@@ -242,15 +249,15 @@ const handleMessageFromBackgroundScript = (messagePayload, sender) => {
   let finalDownloadId;
   if (originalIdFromPayload) {
     finalDownloadId = originalIdFromPayload;
-    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.originalDownloadId: ${finalDownloadId}`);
+    logger.logDebug(`[CS_FID_LOGIC CALL_ID: ${uniqueCallId}] finalDownloadId set from message.originalDownloadId: ${finalDownloadId}`);
   } else if (receivedDownloadIdFromPayload) {
     finalDownloadId = receivedDownloadIdFromPayload;
-    logger.logDebug(`[CS_FID_LOGIC] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
+    logger.logDebug(`[CS_FID_LOGIC CALL_ID: ${uniqueCallId}] finalDownloadId set from message.downloadId: ${finalDownloadId}`);
   } else {
-    logger.logWarn("[CS_FID_LOGIC] Message has neither originalDownloadId nor downloadId at the top level of payload.");
+    logger.logWarn(`[CS_FID_LOGIC CALL_ID: ${uniqueCallId}] Message has neither originalDownloadId nor downloadId at the top level of payload.`);
     if (messagePayload && messagePayload.error && messagePayload.originalMessage && typeof messagePayload.originalMessage.downloadId === "string") {
       finalDownloadId = messagePayload.originalMessage.downloadId;
-      logger.logInfo(`[CS_FID_LOGIC] finalDownloadId recovered from message.originalMessage.downloadId due to error payload from bridge: ${finalDownloadId}`);
+      logger.logInfo(`[CS_FID_LOGIC CALL_ID: ${uniqueCallId}] finalDownloadId recovered from message.originalMessage.downloadId due to error payload from bridge: ${finalDownloadId}`);
     }
   }
   if (!finalDownloadId && browserDownloadId) {
@@ -355,11 +362,23 @@ const handleMessageFromBackgroundScript = (messagePayload, sender) => {
   }
   const buttonData = downloadButtons[finalDownloadId];
   if (!buttonData) {
-    logger.logWarn(`[HANDLE_MSG_FROM_BG] Button data not found for finalDownloadId: ${finalDownloadId}. Message:`, messagePayload);
+    const currentKeysForWarning = Object.keys(downloadButtons);
+    let payloadStringForWarning = "<payload_serialization_error_in_warning>";
+    try {
+      payloadStringForWarning = JSON.stringify(messagePayload);
+    } catch {
+    }
+    logger.logWarn(`[HANDLE_MSG_FROM_BG CALL_ID: ${uniqueCallId}] Button data not found for finalDownloadId: ${finalDownloadId}. Message: ${payloadStringForWarning}. All downloadButton keys at this point: ${currentKeysForWarning.join(",") || "none"}`);
     return Promise.resolve({ handled: false, reason: "Button data not found for finalDownloadId" });
   }
   const { elem: downloadButton, resetTimer, state: currentState } = buttonData;
   logger.logDebug(`[HANDLE_MSG_FROM_BG] Processing for finalDownloadId: ${finalDownloadId}. Current button state: ${currentState}. Message progress: ${progress}, success: ${messagePayload.success}`);
+  if (currentState === "Downloaded" || currentState === "Error") {
+    if (progress !== void 0 || status !== void 0) {
+      logger.logWarn(`[HANDLE_MSG_FROM_BG] Received message for already finalized downloadId ${finalDownloadId} (state: ${currentState}). Ignoring for UI update. Message:`, messagePayload);
+      return Promise.resolve({ handled: true, id: finalDownloadId, reason: `Already in ${currentState} state` });
+    }
+  }
   const isSimpleAck = messagePayload.error === "" && messagePayload.success === void 0 && progress === void 0 && status === void 0 && completed === void 0;
   if (isSimpleAck && currentState !== "Preparing" && originalIdFromPayload === finalDownloadId) {
     logger.logDebug(`[HANDLE_MSG_FROM_BG] Received redundant simple acknowledgment for ${finalDownloadId} while button state is ${currentState}. Ignoring for UI update. Payload:`, JSON.parse(JSON.stringify(messagePayload)));
@@ -984,15 +1003,30 @@ function writeConfigValueToLocalStorage(key, value) {
   const item = JSON.stringify(value);
   window.localStorage.setItem("SOUNDCLOUD-DL-" + key, item);
 }
-loadConfiguration(true).then((config) => {
-  for (const key of configKeys) {
-    if (config[key].secret) continue;
-    writeConfigValueToLocalStorage(key, config[key].value);
+logger.logInfo("[ContentScript] Requesting configuration from background script...");
+loggedSendMessageToBackend({ type: "GET_EXTENSION_CONFIG" }, "ContentScript_GetConfig").then((loadedConfigFromBg) => {
+  if (!loadedConfigFromBg) {
+    logger.logError("[ContentScript] Failed to load configuration from background script. Received undefined or null.");
+    return;
   }
-  setOnConfigValueChanged(writeConfigValueToLocalStorage);
-  if (config["block-reposts"].value) handleBlockRepostsConfigChange(true);
-  registerConfigChangeHandler("block-reposts", handleBlockRepostsConfigChange);
-}).catch((err) => logger.logError("Failed to load configuration in content script:", err));
+  logger.logInfo("[ContentScript] Configuration received from background:", loadedConfigFromBg);
+  for (const key of Object.keys(loadedConfigFromBg)) {
+    if (configKeys.includes(key)) {
+      const configKey = key;
+      writeConfigValueToLocalStorage(configKey, loadedConfigFromBg[configKey]?.value);
+    }
+  }
+  const blockRepostsConfig = loadedConfigFromBg["block-reposts"];
+  if (blockRepostsConfig && typeof blockRepostsConfig.value === "boolean") {
+    logger.logInfo(`[ContentScript] Setting up block-reposts based on received config: ${blockRepostsConfig.value}`);
+    handleBlockRepostsConfigChange(blockRepostsConfig.value);
+  } else {
+    logger.logWarn("[ContentScript] 'block-reposts' configuration not found or invalid in object from background.");
+  }
+  logger.logInfo("[ContentScript] Initial configuration applied.");
+}).catch((err) => {
+  logger.logError("[ContentScript] Error requesting or processing configuration from background script:", err);
+});
 const createPauseResumeHandler = (downloadId) => {
   return async () => {
     const buttonData = downloadButtons[downloadId];

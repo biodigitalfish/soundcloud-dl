@@ -11,7 +11,7 @@ import {
     DownloadSetRangeRequest,
     Playlist,
 } from "./types";
-import { loadConfigValue, storeConfigValue, getConfigValue } from "./utils/config";
+import { loadConfigValue, storeConfigValue, getConfigValue, loadConfiguration, configKeys, Config } from "./utils/config";
 import { MetadataExtractor } from "./metadataExtractor";
 import { eraseDownloadHistoryEntry } from "./utils/browser";
 import { Semaphore } from "./utils/semaphore";
@@ -69,6 +69,26 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
     if (!tabId) {
         logger.logWarn("Message received without a valid tab ID", { sender, message });
         return { error: "No valid tab ID found in message sender" }; // Return a JSON-serializable error object
+    }
+
+    // Handle GET_EXTENSION_CONFIG separately as it doesn't involve typical download flow
+    if (type === "GET_EXTENSION_CONFIG") {
+        logger.logDebug(`[MessageHandler] Received GET_EXTENSION_CONFIG request from tab ${tabId}`);
+        try {
+            const currentFullConfig = await loadConfiguration(false); // monitorStorage is false, background already does this
+            const nonSecretConfig: Partial<Record<keyof Config, { value: any }>> = {};
+
+            for (const key of configKeys) {
+                if (!currentFullConfig[key].secret) {
+                    nonSecretConfig[key] = { value: currentFullConfig[key].value };
+                }
+            }
+            logger.logDebug("[MessageHandler] Sending non-secret configuration to content script:", nonSecretConfig);
+            return Promise.resolve(nonSecretConfig);
+        } catch (err) {
+            logger.logError("[MessageHandler] Error loading or preparing configuration for content script:", err);
+            return Promise.reject({ error: "Failed to retrieve extension configuration." });
+        }
     }
 
     // --- IMMEDIATE TEST MESSAGE for DOWNLOAD type only to reduce noise --- 

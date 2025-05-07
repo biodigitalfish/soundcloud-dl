@@ -1,5 +1,5 @@
 import { L as Logger, a as LogLevel } from "./logger-DNjPuH99.js";
-import { g as getPathFromExtensionFile, a as getConfigValue, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, d as getDefaultExportFromCjs, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as sendMessageToTab, m as eraseDownloadHistoryEntry, n as getExtensionManifest, o as loadConfiguration, p as onMessage, q as onBeforeSendHeaders, r as onBeforeRequest, t as onPageActionClicked, u as registerConfigChangeHandler, v as setAuthHeaderRule, w as setClientIdRule, x as usesDeclarativeNetRequestForModification, y as openOptionsPage } from "./config-CAI3Vpb8.js";
+import { g as getPathFromExtensionFile, a as getConfigValue, c as concatArrayBuffers, X as XRegExp, b as commonjsGlobal, d as getDefaultExportFromCjs, s as sanitizeFilenameForDownload, l as loadConfigValue, e as searchDownloads, f as storeConfigValue, i as isServiceWorkerContext, h as createURLFromBlob, j as downloadToFile, k as loadConfiguration, m as configKeys, n as sendMessageToTab, o as eraseDownloadHistoryEntry, p as getExtensionManifest, q as onMessage, r as onBeforeSendHeaders, t as onBeforeRequest, u as onPageActionClicked, v as registerConfigChangeHandler, w as setAuthHeaderRule, x as setClientIdRule, y as usesDeclarativeNetRequestForModification, z as openOptionsPage } from "./config-CmaCATSF.js";
 class RateLimitError extends Error {
   constructor(message) {
     super(message);
@@ -16,7 +16,7 @@ class SoundCloudApi {
     this.logger = Logger.create("SoundCloudApi");
   }
   // --- Retry with backoff utility ---
-  async retryWithBackoff(fn, retries = 3, initialDelayMs = 2e3, contextString) {
+  async retryWithBackoff(fn, retries = 30, initialDelayMs = 2e3, contextString) {
     if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
       const waitTime = this.globalBackoffUntil - Date.now();
       this.logger.logWarn(`[Global Backoff] Active. Waiting for ${waitTime / 1e3}s before proceeding with ${contextString || "operation"}.`);
@@ -3894,6 +3894,23 @@ async function handleIncomingMessage(message, sender) {
     logger$1.logWarn("Message received without a valid tab ID", { sender, message });
     return { error: "No valid tab ID found in message sender" };
   }
+  if (type === "GET_EXTENSION_CONFIG") {
+    logger$1.logDebug(`[MessageHandler] Received GET_EXTENSION_CONFIG request from tab ${tabId}`);
+    try {
+      const currentFullConfig = await loadConfiguration(false);
+      const nonSecretConfig = {};
+      for (const key of configKeys) {
+        if (!currentFullConfig[key].secret) {
+          nonSecretConfig[key] = { value: currentFullConfig[key].value };
+        }
+      }
+      logger$1.logDebug("[MessageHandler] Sending non-secret configuration to content script:", nonSecretConfig);
+      return Promise.resolve(nonSecretConfig);
+    } catch (err) {
+      logger$1.logError("[MessageHandler] Error loading or preparing configuration for content script:", err);
+      return Promise.reject({ error: "Failed to retrieve extension configuration." });
+    }
+  }
   if (type === DOWNLOAD && downloadId) {
     const testMessagePayload = {
       scdl_test_message: "HELLO_FROM_MESSAGE_HANDLER_EARLY_ACK_TEST",
@@ -4234,9 +4251,10 @@ async function updateClientIdRule(clientId) {
   await setClientIdRule(clientId);
 }
 logger.logInfo("Starting with version: " + manifest.version);
+onMessage(handleIncomingMessage);
+logger.logInfo("Initial message listener registered.");
 loadConfiguration(true).then(async () => {
-  logger.logInfo("Initial configuration loaded. Registering message listener and setting initial DNR rules.");
-  onMessage(handleIncomingMessage);
+  logger.logInfo("Initial configuration loaded. Setting initial DNR rules.");
   const initialOauthToken = getConfigValue("oauth-token");
   await updateAuthHeaderRule(initialOauthToken);
   const initialClientId = getConfigValue("client-id");

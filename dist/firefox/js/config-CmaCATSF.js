@@ -2782,9 +2782,6 @@ function sanitizeFilenameForDownload(input) {
 const logger = Logger.create("Config");
 let isStorageMonitored = false;
 let onConfigValueChanged;
-function setOnConfigValueChanged(callback) {
-  onConfigValueChanged = callback;
-}
 const config = {
   "download-hq-version": { sync: true, defaultValue: true },
   "download-original-version": { sync: true, defaultValue: false },
@@ -2891,7 +2888,7 @@ const handleStorageChanged = (changes, areaname) => {
     if (areaname !== "local") logger.logInfo("Remote updating", key, "to", getDisplayValue(newValue, entry));
     entry.value = newValue;
     if (entry.onChanged) entry.onChanged(newValue);
-    if (!entry.secret && onConfigValueChanged) onConfigValueChanged(key, newValue);
+    if (!entry.secret && onConfigValueChanged) ;
   }
 };
 function getDisplayValue(value, entry) {
@@ -2902,7 +2899,6 @@ export {
   resetConfig as A,
   sendMessageToBackend as B,
   determineIfUrlIsSet as C,
-  setOnConfigValueChanged as D,
   XRegExp as X,
   getConfigValue as a,
   commonjsGlobal as b,
@@ -2914,20 +2910,20 @@ export {
   createURLFromBlob as h,
   isServiceWorkerContext as i,
   downloadToFile as j,
-  sendMessageToTab as k,
+  loadConfiguration as k,
   loadConfigValue as l,
-  eraseDownloadHistoryEntry as m,
-  getExtensionManifest as n,
-  loadConfiguration as o,
-  onMessage as p,
-  onBeforeSendHeaders as q,
-  onBeforeRequest as r,
+  configKeys as m,
+  sendMessageToTab as n,
+  eraseDownloadHistoryEntry as o,
+  getExtensionManifest as p,
+  onMessage as q,
+  onBeforeSendHeaders as r,
   sanitizeFilenameForDownload as s,
-  onPageActionClicked as t,
-  registerConfigChangeHandler as u,
-  setAuthHeaderRule as v,
-  setClientIdRule as w,
-  usesDeclarativeNetRequestForModification as x,
-  openOptionsPage as y,
-  configKeys as z
+  onBeforeRequest as t,
+  onPageActionClicked as u,
+  registerConfigChangeHandler as v,
+  setAuthHeaderRule as w,
+  setClientIdRule as x,
+  usesDeclarativeNetRequestForModification as y,
+  openOptionsPage as z
 };

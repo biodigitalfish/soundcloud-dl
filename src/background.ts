@@ -46,10 +46,13 @@ async function updateClientIdRule(clientId?: string | null): Promise<void> {
 
 logger.logInfo("Starting with version: " + manifest.version);
 
+// Register message listener EARLIER
+onMessage(handleIncomingMessage);
+logger.logInfo("Initial message listener registered.");
+
 // Load configuration and THEN register message listener AND SET INITIAL DNR RULE
 loadConfiguration(true).then(async () => {
-  logger.logInfo("Initial configuration loaded. Registering message listener and setting initial DNR rules.");
-  onMessage(handleIncomingMessage);
+  logger.logInfo("Initial configuration loaded. Setting initial DNR rules.");
 
   const initialOauthToken = getConfigValue("oauth-token") as string | null | undefined;
   await updateAuthHeaderRule(initialOauthToken);
