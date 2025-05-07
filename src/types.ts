@@ -1,4 +1,4 @@
-import { Track } from "./soundcloudApi"; // Assuming Track is a base type needed by Playlist, DownloadData
+import { Track } from "./api/soundcloudApi"; // Assuming Track is a base type needed by Playlist, DownloadData
 
 // From messageHandler.ts
 export interface DownloadRequest {
@@ -48,6 +48,7 @@ export interface DownloadData {
     playlistName?: string;
     hls: boolean;
     producer?: string;
+    wasOriginallyHls?: boolean;
 }
 
 export interface TranscodingDetails {

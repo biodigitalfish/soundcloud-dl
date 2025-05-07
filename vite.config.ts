@@ -24,24 +24,21 @@ export default defineConfig({
         topLevelAwait(),
         viteStaticCopy({
             targets: [
-                { src: "src/icons/*", dest: "icons" },
+                { src: "src/ui/icons/*", dest: "icons" },
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js", dest: "ffmpeg-core" },
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm", dest: "ffmpeg-core" },
                 // { src: 'node_modules/@ffmpeg/core-mt/dist/esm/ffmpeg-core.worker.js', dest: 'ffmpeg-core' }, // Uncomment if using multi-threaded version
-                // Copy the correct manifest file based on the browser
                 {
                     src: `src/manifests/manifest_${browser === "firefox" ? "build" : "chrome"}.json`,
                     dest: ".",
                     rename: "manifest.json"
                 },
                 // Copy background.html
-                { src: "src/background.html", dest: "." },
+                { src: "src/background/background.html", dest: "." },
                 // Copy settings.html
-                { src: "src/settings.html", dest: "." }
+                { src: "src/settings/settings.html", dest: "." }
             ]
         }),
-        // webExtension plugin removed for this test
-        // zipPack plugin removed for this test
     ],
     optimizeDeps: {
         exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util"]
@@ -60,18 +57,14 @@ export default defineConfig({
         emptyOutDir: true, // Clean dist/${browser} before each build
         target: "es2022",
         sourcemap: true, // Consider 'hidden' for production or false to reduce size
-        minify: false, // Set to true or 'terser' for production builds
-        // Re-instating explicit rollupOptions with all manifest entries mapped.
+        minify: true, // Set to true or 'terser' for production builds
         rollupOptions: {
             input: {
-                // 'background.html': path.resolve(__dirname, 'src/background.html'), // No longer an input, will be copied
-                // 'settings.html': path.resolve(__dirname, 'src/settings.html'),    // No longer an input, will be copied
-                "js/background.js": path.resolve(__dirname, "src/background.ts"),
-                "js/settings.js": path.resolve(__dirname, "src/settings.ts"),     // Added settings script
-                "js/content.js": path.resolve(__dirname, "src/content.ts"),
-                "js/bridge-content-script.js": path.resolve(__dirname, "src/bridge-content-script.ts"), // Added bridge script
-                // "js/content_loader.js": path.resolve(__dirname, "src/content_loader.js"), // Removed from Vite build input, now handled by static copy
-                "js/repostBlocker.js": path.resolve(__dirname, "src/repostBlocker.ts")
+                "js/background.js": path.resolve(__dirname, "src/background/background.ts"),
+                "js/settings.js": path.resolve(__dirname, "src/settings/settings.ts"),     // Added settings script
+                "js/content.js": path.resolve(__dirname, "src/content/content.ts"),
+                "js/bridge-content-script.js": path.resolve(__dirname, "src/content/bridge-content-script.ts"), // Added bridge script
+                "js/repostBlocker.js": path.resolve(__dirname, "src/content/repostBlocker.ts")
             },
             output: {
                 format: "esm",

@@ -27,7 +27,7 @@
                 "*://*.soundcloud.com/*"
             ],
             "js": [
-                "js/content_loader.js"
+                "js/content-loader.js"
             ],
             "run_at": "document_idle"
         }
