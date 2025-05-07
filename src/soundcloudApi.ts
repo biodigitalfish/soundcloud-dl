@@ -137,20 +137,21 @@ export class SoundCloudApi {
     };
   }
 
-  async getOriginalDownloadUrl(id: number) {
+  async getOriginalDownloadUrl(id: number): Promise<string | null> {
     const url = `${this.baseUrl}/tracks/${id}/download`;
-
     this.logger.logInfo("Getting original download URL for track with Id", id);
 
-    const downloadObj = await this.fetchJson<OriginalDownload>(url);
-
-    if (!downloadObj || !downloadObj.redirectUri) {
-      this.logger.logError("Invalid original file response", downloadObj);
-
+    try {
+      const downloadObj = await this.fetchJson<OriginalDownload>(url);
+      if (!downloadObj || !downloadObj.redirectUri) {
+        this.logger.logError("Invalid original file response", downloadObj);
+        return null;
+      }
+      return downloadObj.redirectUri;
+    } catch (_error) {
+      this.logger.logError(`Failed to get original download URL for track ${id}`, _error);
       return null;
     }
-
-    return downloadObj.redirectUri;
   }
 
   async downloadArtwork(artworkUrl: string) {
@@ -162,76 +163,85 @@ export class SoundCloudApi {
     return this.fetchArrayBuffer(streamUrl, reportProgress);
   }
 
-  private async fetchArrayBuffer(url: string, reportProgress?: ProgressReport): Promise<[ArrayBuffer, Headers]> {
+  private async fetchArrayBuffer(url: string, reportProgress?: ProgressReport): Promise<[ArrayBuffer | null, Headers | null]> {
     try {
-      if (reportProgress) {
-        return new Promise((resolve, reject) => {
-          const req = new XMLHttpRequest();
+      const response = await fetch(url); // Always use fetch
 
-          try {
-            const handleProgress = (event: ProgressEvent<EventTarget>) => {
-              const progress = Math.round((event.loaded / event.total) * 100);
-
-              reportProgress(progress);
-            };
-
-            const handleReadyStateChanged = async (event: Event) => {
-              if (req.readyState == req.DONE) {
-                if (req.status !== 200 || !req.response) {
-                  resolve([null, null]);
-
-                  return;
-                }
-
-                reportProgress(100);
-
-                const headers = new Headers();
-
-                const headerString = req.getAllResponseHeaders();
-                const headerMap = headerString
-                  .split("\r\n")
-                  .filter((i) => !!i)
-                  .map((i) => {
-                    const [name, value] = i.split(": ");
-
-                    return [name, value];
-                  });
-
-                for (const [name, value] of headerMap) {
-                  headers.set(name, value);
-                }
-
-                resolve([req.response, headers]);
-              }
-            };
-
-            req.responseType = "arraybuffer";
-            req.onprogress = handleProgress;
-            req.onreadystatechange = handleReadyStateChanged;
-            req.onerror = reject;
-            req.open("GET", url, true);
-            req.send(null);
-          } catch (error) {
-            this.logger.logError(`Failed to fetch ArrayBuffer with progress from: ${url}`, error);
-
-            reject(error);
-          }
-        });
+      if (!response.ok) {
+        if (response.status === 404) {
+          this.logger.logDebug(`[fetchArrayBuffer] Resource not found (404) for ${url}`);
+          return [null, response.headers]; // Return null buffer, but valid headers
+        }
+        if (response.status === 429) {
+          this.logger.logWarn(`[fetchArrayBuffer] Rate limited (429) while fetching ${url}.`);
+          throw new RateLimitError(`Rate limited (status 429) on ${url}`);
+        }
+        // For other non-OK statuses (5xx, 403, etc.)
+        const errorText = `[fetchArrayBuffer] HTTP error for ${url} - Status: ${response.status} ${response.statusText}`;
+        throw new Error(errorText);
       }
 
-      const resp = await fetch(url);
+      if (!response.body) {
+        // This case should ideally not happen for a successful response, but good to guard.
+        this.logger.logError(`Response for ${url} has no body, despite response.ok being true.`);
+        throw new Error(`Response for ${url} has no body.`);
+      }
 
-      if (!resp.ok) return [null, null];
+      const contentLength = response.headers.get("Content-Length");
+      const total = contentLength ? parseInt(contentLength, 10) : 0;
+      let loaded = 0;
 
-      const buffer = await resp.arrayBuffer();
+      const chunks: Uint8Array[] = [];
+      const reader = response.body.getReader();
 
-      if (!buffer) return [null, null];
+      if (reportProgress && total > 0) {
+        reportProgress(0); // Initial progress
+      }
 
-      return [buffer, resp.headers];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        chunks.push(value); // value is Uint8Array
+        loaded += value.byteLength;
+        if (reportProgress && total > 0) {
+          reportProgress(Math.round((loaded / total) * 100));
+        }
+      }
+
+      if (reportProgress) {
+        // Ensure 100% is reported if all chunks are read, even if total was 0 or Content-Length was missing
+        reportProgress(100);
+      }
+
+      // Concatenate chunks into a single ArrayBuffer
+      const completeBuffer = new ArrayBuffer(loaded);
+      const view = new Uint8Array(completeBuffer);
+      let offset = 0;
+      for (const chunk of chunks) {
+        view.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+
+      // Check for genuinely empty buffer after successful download, which might be an issue.
+      if (loaded === 0 && response.status === 200) {
+        this.logger.logWarn(`[fetchArrayBuffer] Fetched ${url} (Status: ${response.status}) but received an empty (0 bytes) buffer.`);
+        // Decide if this should be an error or return [null, headers]
+        // For now, returning the empty buffer as it is technically what was received.
+      }
+
+      return [completeBuffer, response.headers];
+
     } catch (error) {
-      this.logger.logError(`Failed to fetch ArrayBuffer from: ${url}`, error);
-
-      return [null, null];
+      this.logger.logError(`[fetchArrayBuffer] Generic error for ${url}:`, error);
+      // To keep original behavior of throwing specific RateLimitError or generic Error:
+      if (error instanceof RateLimitError) {
+        throw error;
+      }
+      // Ensure a generic error is thrown if it's not already one of our specific types or a standard Error
+      throw new Error(`Failed to fetch array buffer from ${url}: ${(error instanceof Error ? error.message : String(error))}`);
     }
   }
 

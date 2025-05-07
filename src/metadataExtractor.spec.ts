@@ -71,33 +71,33 @@ describe("Different separators", () => {
     expect(extractor.getTitle()).toBe(correctTitle);
   });
 
-  test('Artist separator without spaces', () => {
-    const title = 'Artist&Name - title';
+  test("Artist separator without spaces", () => {
+    const title = "Artist&Name - title";
     const extractor = createExtractor(title);
 
     const correctArtists: Artist[] = [
       {
-        name: 'Artist&Name',
+        name: "Artist&Name",
         type: ArtistType.Main,
       },
     ];
-    const correctTitle = 'title';
+    const correctTitle = "title";
 
     expect(extractor.getArtists()).toEqual(correctArtists);
     expect(extractor.getTitle()).toBe(correctTitle);
   });
 
-  test('Prune "Original Mix"', () => {
-    const title = 'Artist - title (Original Mix)';
+  test("Prune \"Original Mix\"", () => {
+    const title = "Artist - title (Original Mix)";
     const extractor = createExtractor(title);
 
     const correctArtists: Artist[] = [
       {
-        name: 'Artist',
+        name: "Artist",
         type: ArtistType.Main,
       },
     ];
-    const correctTitle = 'title';
+    const correctTitle = "title";
 
     expect(extractor.getArtists()).toEqual(correctArtists);
     expect(extractor.getTitle()).toBe(correctTitle);

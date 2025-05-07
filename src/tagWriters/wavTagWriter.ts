@@ -1,5 +1,6 @@
 import { TagWriter } from "./tagWriter";
 import { WaveFile } from "wavefile";
+import type { TagWriterOutput } from "./tagWriter";
 
 export class WavTagWriter implements TagWriter {
   private wav: WaveFile;
@@ -66,13 +67,13 @@ export class WavTagWriter implements TagWriter {
     // });
   }
 
-  getBuffer(): Promise<ArrayBuffer> {
+  getBuffer(): Promise<TagWriterOutput> {
     this.wav.toRIFF();
 
     const rawBuffer = this.wav.toBuffer();
 
     console.log({ tags: this.wav.listTags() });
 
-    return Promise.resolve(rawBuffer.buffer);
+    return Promise.resolve({ buffer: rawBuffer.buffer, tagsApplied: true });
   }
 }

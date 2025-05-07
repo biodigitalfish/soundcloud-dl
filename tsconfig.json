@@ -1,14 +1,24 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "target": "ES6",
-    "lib": ["dom", "ES2022"],
-    "moduleResolution": "node",
+    "module": "ESNext",
+    "target": "ES2022",
+    "lib": [
+      "dom",
+      "ES2022"
+    ],
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
     "allowJs": true,
     "sourceMap": true,
-    "outDir": "./dist"
+    "isolatedModules": true,
+    "noEmit": true,
+    "noImplicitAny": false
   },
-  "exclude": ["node_modules", "**/*.spec.ts"],
-  "include": ["src"]
+  "exclude": [
+    "node_modules",
+    "**/*.spec.ts"
+  ],
+  "include": [
+    "src"
+  ]
 }

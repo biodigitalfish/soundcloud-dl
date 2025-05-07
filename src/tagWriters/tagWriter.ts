@@ -1,3 +1,9 @@
+export interface TagWriterOutput {
+  buffer: ArrayBuffer;
+  tagsApplied: boolean;
+  message?: string; // Optional message, e.g., why tags weren't applied
+}
+
 export interface TagWriter {
   setTitle(title: string): void;
   setArtists(artists: string[]): void;
@@ -7,5 +13,5 @@ export interface TagWriter {
   setYear(year: number): void;
   setGrouping(grouping: string): void;
   setArtwork(artworkBuffer: ArrayBuffer): void;
-  getBuffer(): Promise<ArrayBuffer>;
+  getBuffer(): Promise<TagWriterOutput>;
 }

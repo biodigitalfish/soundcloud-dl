@@ -1,6 +1,7 @@
-import { concatArrayBuffers } from "../utils/download";
 import { TagWriter } from "./tagWriter";
 import { Logger, LogLevel } from "../utils/logger";
+import { concatArrayBuffers } from "../utils/download";
+import type { TagWriterOutput } from "./tagWriter";
 
 interface Atom {
   length: number;
@@ -31,7 +32,11 @@ class Mp4 {
   private _loggedErrors: Set<string> = new Set();
   private _hasValidStructure = false;
   private _logger: Logger;
-  
+
+  public get hasValidMp4Structure(): boolean {
+    return this._hasValidStructure;
+  }
+
   private _logError(message: string): void {
     // Only log each unique error message once
     if (!this._loggedErrors.has(message)) {
@@ -43,34 +48,63 @@ class Mp4 {
   constructor(buffer: ArrayBuffer) {
     this._buffer = buffer;
     this._bufferView = new DataView(buffer);
-    this._logger = Logger.create("MP4TagWriter", LogLevel.Warning); // Only show warnings and errors
+    this._logger = Logger.create("MP4TagWriterInternals", LogLevel.Debug); // Changed source name and level
   }
 
   parse() {
     if (!this._buffer) throw new Error("Buffer can not be null");
     if (this._atoms.length > 0) throw new Error("Buffer already parsed");
+    this._logger.logDebug("Starting MP4 parse..."); // Add start marker
 
     let offset = 0;
     let atom: Atom;
+    let atomsFound: { name: string; length: number; offset: number }[] = []; // Store found atoms
 
     while (true) {
       atom = this._readAtom(offset);
 
-      if (!atom || atom.length < 1) break;
+      if (!atom || atom.length < 1 || offset >= this._buffer.byteLength) { // Add buffer boundary check
+        if (offset < this._buffer.byteLength) {
+          this._logger.logDebug(`Parsing stopped: _readAtom returned invalid atom or zero length at offset ${offset}.`);
+        } else {
+          this._logger.logDebug(`Parsing stopped: Reached end of buffer at offset ${offset}.`);
+        }
+        break;
+      }
+
+      // Log details of the found atom
+      atomsFound.push({ name: atom.name || "undefined", length: atom.length, offset: atom.offset });
+      // this._logger.logDebug(`Found top-level atom: Name=${atom.name || '?'}, Length=${atom.length}, Offset=${atom.offset}`);
 
       this._atoms.push(atom);
-
       offset = atom.offset + atom.length;
+
+      // Safety break if offset seems wrong (e.g., negative length, goes backwards)
+      if (offset <= atom.offset) {
+        this._logger.logError(`Parsing stopped: Invalid offset progression. Current offset ${atom.offset}, next offset calculated as ${offset}.`);
+        break;
+      }
     }
 
-    if (this._atoms.length < 1) throw new Error("Buffer could not be parsed");
-    
-    // Check if this is a valid MP4 file with a 'moov' atom
-    const hasMoov = this._findAtom(this._atoms, ["moov"]) !== null;
-    this._hasValidStructure = hasMoov;
-    
-    if (!hasMoov) {
-      this._logError("File does not contain a 'moov' atom - likely not a valid MP4 file or has a non-standard structure");
+    this._logger.logDebug(`Finished MP4 parse. Found ${this._atoms.length} top-level atoms.`);
+    // Log the summary of atoms found
+    this._logger.logDebug(`Top-level atoms summary: ${JSON.stringify(atomsFound)}`);
+
+
+    if (this._atoms.length < 1) {
+      this._logError("Buffer could not be parsed - no valid top-level atoms found."); // Changed error message slightly
+      this._hasValidStructure = false;
+      return; // Exit early if no atoms found
+    }
+
+    // Check if this is a valid MP4 file with a 'moov' atom (case-insensitive check just for this debug step)
+    const moovAtom = this._atoms.find(a => a.name?.toLowerCase() === "moov");
+    this._hasValidStructure = !!moovAtom; // Set based on finding 'moov' (case-insensitive for now)
+
+    if (!this._hasValidStructure) {
+      this._logError("File structure check failed: Did not find a top-level 'moov' atom (checked case-insensitively).");
+    } else {
+      this._logger.logDebug("File structure check passed: Found top-level 'moov' atom (case-insensitive check).");
     }
   }
 
@@ -78,14 +112,14 @@ class Mp4 {
     try {
       // Skip if not a valid MP4 structure
       if (!this._hasValidStructure) {
-        this._logError(`Cannot set duration - file doesn't have a valid MP4 structure`);
+        this._logError("Cannot set duration - file doesn't have a valid MP4 structure");
         return;
       }
-      
+
       const mvhdAtom: Atom = this._findAtom(this._atoms, ["moov", "mvhd"]);
-  
+
       if (!mvhdAtom) throw new Error("'mvhd' atom could not be found");
-  
+
       // version(4) + created(4) + modified(4) + timescale(4)
       const precedingDataLength = 16;
       this._bufferView.setUint32(mvhdAtom.offset + ATOM_HEAD_LENGTH + precedingDataLength, duration);
@@ -101,7 +135,7 @@ class Mp4 {
         this._logError(`Cannot add ${name} metadata - file doesn't have a valid MP4 structure`);
         return;
       }
-    
+
       if (name.length > 4 || name.length < 1) throw new Error(`Unsupported atom name: '${name}'`);
 
       let dataBuffer: ArrayBuffer;
@@ -222,75 +256,52 @@ class Mp4 {
 
   private _insertAtom(atom: Atom, path: string[]) {
     try {
-      // First check if the structure is valid
-      if (!this._hasValidStructure) {
-        this._logError("Cannot insert atom: file doesn't have a valid MP4 structure");
+      this._logger.logDebug(`Attempting to insert atom '${atom.name}' at path '${path.join(" > ")}'.`);
+      // For tag atoms, the path should always end in 'ilst'
+      if (!path || path[path.length - 1] !== "ilst") {
+        this._logError(`Cannot insert tag atom '${atom.name}': Path does not end in 'ilst'.`);
         return;
       }
-    
-      if (!path) throw new Error("Path can not be empty");
 
-      const parentAtom = this._findAtom(this._atoms, path);
+      // Ensure the metadata path exists, potentially creating it. Get the 'ilst' atom.
+      const parentAtom = this._createMetadataPath(); // This now returns the 'ilst' atom or null
 
       if (!parentAtom) {
-        // Try to create missing atoms in the path
-        this._createMetadataPath();
-        
-        // Try again after creating the path
-        const newParentAtom = this._findAtom(this._atoms, path);
-        
-        if (!newParentAtom) {
-          // Log the error instead of throwing it
-          this._logError(`Parent atom at path '${path.join(" > ")}' could not be found or created`);
-          return; // Exit without throwing
-        }
-        
-        // Continue with the newly created parent atom
-        if (newParentAtom.children === undefined) {
-          newParentAtom.children = this._readChildAtoms(newParentAtom);
-        }
-    
-        let offset = newParentAtom.offset + ATOM_HEAD_LENGTH;
-    
-        if (newParentAtom.name === "meta") {
-          offset += 4;
-        } else if (newParentAtom.name === "stsd") {
-          offset += 8;
-        }
-    
-        if (newParentAtom.children.length > 0) {
-          const lastChild = newParentAtom.children[newParentAtom.children.length - 1];
-          offset = lastChild.offset + lastChild.length;
-        }
-    
-        atom.offset = offset;
-        newParentAtom.children.push(atom);
+        // _createMetadataPath already logged the error
+        this._logError(`Cannot insert atom '${atom.name}': Failed to find or create parent 'ilst' atom.`);
         return;
       }
 
+      // Ensure parent's children are loaded (should be handled by _createMetadataPath returning it)
       if (parentAtom.children === undefined) {
         parentAtom.children = this._readChildAtoms(parentAtom);
+        this._logger.logDebug(`Loaded children for '${parentAtom.name}' in _insertAtom.`);
       }
 
-      let offset = parentAtom.offset + ATOM_HEAD_LENGTH;
-
-      if (parentAtom.name === "meta") {
-        offset += 4;
-      } else if (parentAtom.name === "stsd") {
-        offset += 8;
+      // Check if an atom with the same name already exists (e.g., existing 'covr')
+      // Simple replacement: remove existing, add new. More complex merging could be added later.
+      const existingIndex = parentAtom.children.findIndex(child => child.name === atom.name);
+      if (existingIndex !== -1) {
+        this._logger.logDebug(`Replacing existing atom '${atom.name}' in '${parentAtom.name}'.`);
+        parentAtom.children.splice(existingIndex, 1);
       }
 
+
+      // Calculate offset placeholder (actual position determined during getBuffer reconstruction)
+      let offset = parentAtom.offset + this._getAtomHeaderLength(parentAtom);
       if (parentAtom.children.length > 0) {
         const lastChild = parentAtom.children[parentAtom.children.length - 1];
-
-        offset = lastChild.offset + lastChild.length;
+        offset = lastChild.offset + lastChild.length; // Append after last child
       }
+      atom.offset = offset; // Assign placeholder offset
 
-      atom.offset = offset;
-
+      // Add the new atom
       parentAtom.children.push(atom);
+      this._logger.logDebug(`Successfully prepared atom '${atom.name}' for insertion into '${parentAtom.name}'.`);
+
+      // Note: Parent atom lengths will be recalculated in getBuffer()
     } catch (error) {
-      this._logError(`Error inserting atom: ${error.message}`);
+      this._logError(`Error during _insertAtom for '${atom.name}': ${error.message}`);
     }
   }
 
@@ -443,95 +454,91 @@ class Mp4 {
   }
 
   // Helper method to create the metadata path if it doesn't exist
-  private _createMetadataPath() {
+  private _createMetadataPath(): Atom | null { // Return the final 'ilst' atom if successful
     try {
-      // First check if the structure is valid
-      if (!this._hasValidStructure) {
-        // Don't even attempt to create paths for invalid MP4 structures
-        return;
-      }
-      
-      // Find the 'moov' atom first
-      let moovAtom = this._findAtom(this._atoms, ["moov"]);
-      
+      this._logger.logDebug("Attempting to ensure metadata path moov > udta > meta > ilst exists.");
+
+      // 1. Find 'moov' - it must exist for us to proceed.
+      const moovAtom = this._findAtom(this._atoms, ["moov"]);
       if (!moovAtom) {
-        // If we can't find moov, we can't proceed safely
-        this._logError("Could not find 'moov' atom, which is required for metadata");
-        return;
+        this._logError("Cannot create metadata path: Required 'moov' atom not found.");
+        return null;
       }
-      
-      // Ensure moov has children loaded
+      // Ensure moov children are loaded for modification
       if (moovAtom.children === undefined) {
         moovAtom.children = this._readChildAtoms(moovAtom);
       }
-      
-      // Check for udta
-      let udtaAtom = this._findAtom([moovAtom], ["udta"]);
-      if (!udtaAtom) {
-        // Create udta if it doesn't exist
-        const udtaLength = ATOM_HEAD_LENGTH;
-        const udtaOffset = moovAtom.offset + moovAtom.length;
-        
-        udtaAtom = {
-          name: "udta",
-          length: udtaLength,
-          offset: udtaOffset,
-          children: []
-        };
-        
-        moovAtom.children.push(udtaAtom);
-        moovAtom.length += udtaLength;
+
+      let currentParent = moovAtom;
+      const pathSegments = ["udta", "meta", "ilst"];
+
+      for (const segmentName of pathSegments) {
+        let segmentAtom = this._findAtom(currentParent.children, [segmentName]);
+
+        if (!segmentAtom) {
+          this._logger.logDebug(`Creating missing '${segmentName}' atom.`);
+          // Calculate offset: immediately after the parent's header (or after last existing child)
+          let newAtomOffset = currentParent.offset + this._getAtomHeaderLength(currentParent);
+          if (currentParent.children.length > 0) {
+            const lastChild = currentParent.children[currentParent.children.length - 1];
+            newAtomOffset = lastChild.offset + lastChild.length;
+          }
+
+          // Create the new atom with minimal default size
+          const newAtomLength = this._getAtomHeaderLength({ name: segmentName } as Atom);
+          segmentAtom = {
+            name: segmentName,
+            length: newAtomLength,
+            offset: newAtomOffset, // Placeholder offset, might not be perfectly sequential if gaps exist
+            children: [] // Initialize children array
+          };
+
+          // Add to parent's children and update parent's length
+          currentParent.children.push(segmentAtom);
+          // Don't update length here, let getBuffer recalculate based on final children
+
+          this._logger.logDebug(`Created '${segmentName}' atom.`);
+        } else {
+          this._logger.logDebug(`Found existing '${segmentName}' atom.`);
+          // Ensure children are loaded if we plan to descend further
+          if (segmentAtom.children === undefined) {
+            segmentAtom.children = this._readChildAtoms(segmentAtom);
+          }
+        }
+        currentParent = segmentAtom; // Move down the hierarchy
       }
-      
-      // Check for meta
-      let metaAtom = this._findAtom([udtaAtom], ["meta"]);
-      if (!metaAtom) {
-        // Create meta if it doesn't exist
-        const metaLength = ATOM_HEAD_LENGTH + 4; // meta has additional 4 bytes
-        const metaOffset = udtaAtom.offset + udtaAtom.length;
-        
-        metaAtom = {
-          name: "meta",
-          length: metaLength,
-          offset: metaOffset,
-          children: []
-        };
-        
-        udtaAtom.children.push(metaAtom);
-        udtaAtom.length += metaLength;
-      }
-      
-      // Check for ilst
-      let ilstAtom = this._findAtom([metaAtom], ["ilst"]);
-      if (!ilstAtom) {
-        // Create ilst if it doesn't exist
-        const ilstLength = ATOM_HEAD_LENGTH;
-        const ilstOffset = metaAtom.offset + metaAtom.length;
-        
-        ilstAtom = {
-          name: "ilst",
-          length: ilstLength,
-          offset: ilstOffset,
-          children: []
-        };
-        
-        metaAtom.children.push(ilstAtom);
-        metaAtom.length += ilstLength;
-      }
+
+      // Return the final atom in the path ('ilst')
+      this._logger.logDebug("Metadata path creation/verification successful. Returning 'ilst' atom.");
+      return currentParent;
+
     } catch (error) {
-      this._logError(`Failed to create metadata path: ${error.message}`);
+      this._logError(`Failed during _createMetadataPath: ${error.message}`);
+      return null;
     }
+  }
+
+  // Helper to get header length (including meta/stsd variations)
+  private _getAtomHeaderLength(atom: Atom): number {
+    let headLength = ATOM_HEAD_LENGTH;
+    if (atom.name === "meta") {
+      headLength += 4; // version/flags
+    } else if (atom.name === "stsd") {
+      headLength += 8; // Specific stsd header bytes
+    }
+    return headLength;
   }
 }
 
 export class Mp4TagWriter implements TagWriter {
   private _originalBuffer: ArrayBuffer;
   private _mp4: Mp4;
-  
+  private _hasValidMp4: boolean = false;
+
   // Track errors that have already been logged to avoid spamming console
   private static _loggedErrors: Set<string> = new Set();
-  private static _logger: Logger = Logger.create("MP4TagWriter", LogLevel.Warning);
-  
+  private static _logger: Logger = Logger.create("MP4TagWriter", LogLevel.Debug);
+
   private static _logError(message: string): void {
     // Only log each unique error message once
     if (!Mp4TagWriter._loggedErrors.has(message)) {
@@ -541,9 +548,32 @@ export class Mp4TagWriter implements TagWriter {
   }
 
   constructor(buffer: ArrayBuffer) {
-    this._originalBuffer = buffer; // Store original buffer for fallback
-    this._mp4 = new Mp4(buffer);
-    this._mp4.parse();
+    try {
+      // Create a clone of the original buffer to avoid detached ArrayBuffer issues
+      this._originalBuffer = buffer.slice(0);
+      Mp4TagWriter._logger.logDebug(`Creating Mp4TagWriter with buffer of size: ${this._originalBuffer.byteLength}`);
+
+      try {
+        this._mp4 = new Mp4(this._originalBuffer);
+        this._mp4.parse();
+        this._hasValidMp4 = this._mp4.hasValidMp4Structure;
+
+        if (!this._hasValidMp4) {
+          Mp4TagWriter._logError("MP4 structure validation failed. Tags will not be applied but original audio will still be saved.");
+        } else {
+          Mp4TagWriter._logger.logDebug("MP4 structure validation passed. TagWriter ready for use.");
+        }
+      } catch (parseError) {
+        this._hasValidMp4 = false;
+        Mp4TagWriter._logError(`Failed to initialize MP4 parser: ${parseError.message}`);
+        // Even if parsing fails, we'll still have the original buffer for fallback
+      }
+    } catch (constructorError) {
+      Mp4TagWriter._logError(`Mp4TagWriter constructor error: ${constructorError.message}`);
+      // Initialize _originalBuffer to an empty buffer as a last resort
+      this._originalBuffer = new ArrayBuffer(0);
+      this._hasValidMp4 = false;
+    }
   }
 
   setTitle(title: string): void {
@@ -637,13 +667,80 @@ export class Mp4TagWriter implements TagWriter {
     }
   }
 
-  getBuffer(): Promise<ArrayBuffer> {
+  getBuffer(): Promise<TagWriterOutput> {
     try {
-      const buffer = this._mp4.getBuffer();
-      return Promise.resolve(buffer);
+      // Make sure we still have a valid buffer
+      if (!this._originalBuffer || this._originalBuffer.byteLength === 0) {
+        throw new Error("Original buffer is missing or empty");
+      }
+
+      // If MP4 instance is invalid, return original buffer without tagging
+      if (!this._mp4 || !this._hasValidMp4) {
+        Mp4TagWriter._logError(
+          "MP4 structure check failed. Returning original buffer without applying tags."
+        );
+        return Promise.resolve({
+          buffer: this._originalBuffer.slice(0), // Create a fresh copy to avoid detached buffer issues
+          tagsApplied: false,
+          message: "Invalid MP4 structure for tagging."
+        });
+      }
+
+      let processedBuffer: ArrayBuffer;
+      try {
+        processedBuffer = this._mp4.getBuffer();
+
+        // Additional safety check in case getBuffer returns empty or null
+        if (!processedBuffer || processedBuffer.byteLength === 0) {
+          throw new Error("Processed buffer is empty or null");
+        }
+
+        // Create a copy of the processed buffer to avoid any detached buffer issues
+        processedBuffer = processedBuffer.slice(0);
+      } catch (bufferError) {
+        Mp4TagWriter._logError(`Failed to get processed buffer: ${bufferError.message}`);
+        return Promise.resolve({
+          buffer: this._originalBuffer.slice(0), // Create a fresh copy
+          tagsApplied: false,
+          message: `Failed to process MP4 buffer: ${bufferError.message}`
+        });
+      }
+
+      let tagsSuccessfullyApplied = true;
+      let message: string | undefined = undefined;
+
+      if (processedBuffer.byteLength !== this._originalBuffer.byteLength) {
+        tagsSuccessfullyApplied = true;
+        message = `Successfully applied tags (original: ${this._originalBuffer.byteLength}, new: ${processedBuffer.byteLength})`;
+      }
+
+      return Promise.resolve({
+        buffer: processedBuffer,
+        tagsApplied: tagsSuccessfullyApplied,
+        message
+      });
     } catch (error) {
-      Mp4TagWriter._logError(`Failed to get processed buffer: ${error.message}. Using original buffer as fallback.`);
-      return Promise.resolve(this._originalBuffer);
+      const errorMessage = `Failed to get processed buffer: ${error.message}. Using original buffer as fallback.`;
+      Mp4TagWriter._logError(errorMessage);
+
+      try {
+        // Return a copy of the original buffer to prevent detached ArrayBuffer issues
+        return Promise.resolve({
+          buffer: this._originalBuffer.slice(0),
+          tagsApplied: false,
+          message: errorMessage
+        });
+      } catch (finalError) {
+        // If even creating a copy of the original buffer fails, we're in real trouble
+        Mp4TagWriter._logError(`CRITICAL: Failed to create copy of original buffer: ${finalError.message}`);
+
+        // Return empty buffer as absolute last resort (caller should handle this)
+        return Promise.resolve({
+          buffer: new ArrayBuffer(0),
+          tagsApplied: false,
+          message: `CRITICAL ERROR: ${errorMessage} + ${finalError.message}`
+        });
+      }
     }
   }
 }

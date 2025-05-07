@@ -17,6 +17,7 @@ export function concatArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
 
 export function sanitizeFilenameForDownload(input: string) {
   let sanitized = input.replace(/[<>:"/\\|?*]/g, "");
+  // eslint-disable-next-line no-control-regex
   sanitized = sanitized.replace(/[\u0000-\u001f\u0080-\u009f]/g, "");
   sanitized = sanitized.replace(/^\.*/, "");
   sanitized = sanitized.replace(/\.*$/, "");
@@ -28,3 +29,12 @@ export function sanitizeFilenameForDownload(input: string) {
 
   return sanitized.replace(/\s{2,}/, " ").trim();
 }
+
+export const DEFAULT_FILENAME_TEMPLATE = "{artist} - {title}";
+
+/**
+ * Regex for characters that are not allowed in filenames on Windows and other OS.
+ */
+// eslint-disable-next-line no-control-regex
+export const INVALID_FILENAME_CHARS_REGEX = /[\x00-\x1f\x7f<>:"/\\|?*]/g;
+const MULTIPLE_WHITESPACE_REGEX = /\s+/g;

@@ -92,7 +92,9 @@ function hijackedSendMethod(body: any) {
         };
       }
     }
-  } catch {}
+  } catch (error) {
+    console.error("Error in hijackedSendMethod:", error);
+  }
 
   return originalSendMethod.call(this, body);
 }

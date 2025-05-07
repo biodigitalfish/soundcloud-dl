@@ -1,5 +1,6 @@
-import ID3Writer from "browser-id3-writer";
+import { ID3Writer } from "browser-id3-writer";
 import { TagWriter } from "./tagWriter";
+import type { TagWriterOutput } from "./tagWriter";
 
 export class Mp3TagWriter implements TagWriter {
   private writer: ID3Writer;
@@ -39,7 +40,7 @@ export class Mp3TagWriter implements TagWriter {
     // not sure what the highest track number is for ID3, but let's assume it's the max value of short
     if (trackNumber < 1 || trackNumber > 32767) throw new Error("Invalid value for trackNumber");
 
-    this.writer.setFrame("TRCK", trackNumber);
+    this.writer.setFrame("TRCK", trackNumber.toString());
   }
 
   setYear(year: number): void {
@@ -64,11 +65,13 @@ export class Mp3TagWriter implements TagWriter {
     });
   }
 
-  getBuffer(): Promise<ArrayBuffer> {
+  getBuffer(): Promise<TagWriterOutput> {
     this.writer.addTag();
 
     const blob = this.writer.getBlob();
 
-    return blob.arrayBuffer();
+    return blob.arrayBuffer().then(buffer => {
+      return { buffer, tagsApplied: true };
+    });
   }
 }

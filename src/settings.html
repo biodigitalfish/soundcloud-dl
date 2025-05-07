@@ -1,68 +1,75 @@
 <!DOCTYPE html>
 
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
 
-    <style>
-      body {
-        width: 100vw;
-        max-width: 800px;
-        padding: 20px;
-        font-size: 16px;
-        overflow: hidden;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
 
-      .option {
-        display: flex;
-        align-items: center;
-        margin-bottom: 10px;
-      }
+  <style>
+    body {
+      width: 100vw;
+      max-width: 800px;
+      padding: 20px;
+      font-size: 16px;
+      overflow: hidden;
+    }
 
-      hr {
-        margin-top: 15px;
-        margin-bottom: 15px;
-        border: 0;
-        border-top: 1px solid #ccc;
-      }
+    .option {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+    }
 
-      .actions {
-        margin-top: 20px;
-        display: flex;
-        justify-content: center;
-      }
+    hr {
+      margin-top: 15px;
+      margin-bottom: 15px;
+      border: 0;
+      border-top: 1px solid #ccc;
+    }
 
-      .actions button {
-        width: 140px;
-        text-align: center;
-        color: #fffefe;
-        background-color: #ff5419;
-        padding: 8px 0px;
-        border: 0;
-        font-weight: 700;
-        font-size: 16px;
-      }
+    .actions {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+    }
 
-      .actions button:hover {
-        background-color: #ff5419de;
-        cursor: pointer;
-      }
+    .actions button {
+      width: 140px;
+      text-align: center;
+      color: #fffefe;
+      background-color: #ff5419;
+      padding: 8px 0px;
+      border: 0;
+      font-weight: 700;
+      font-size: 16px;
+    }
 
-      .default-download-location-container {
-        margin-left: 22px;
-        margin-right: 22px;
-        margin-top: 6px;
-      }
+    .actions button:hover {
+      background-color: #ff5419de;
+      cursor: pointer;
+    }
 
-      #default-download-location {
-        width: 100%;
-      }
-    </style>
-  </head>
+    .default-download-location-container {
+      margin-left: 22px;
+      margin-right: 22px;
+      margin-top: 6px;
+    }
 
-  <body>
-    <form>
+    #default-download-location {
+      width: 100%;
+    }
+  </style>
+
+  <title>SoundCloud Downloader Settings</title>
+  <link rel="stylesheet" href="/assets/config-B3kYd_Vv.css">
+</head>
+
+<body>
+  <div class="container">
+    <h1>SoundCloud Downloader Settings</h1>
+
+    <form id="settings-form">
       <h4>Download Options</h4>
       <div class="option">
         <input id="download-hq-version" type="checkbox" />
@@ -90,7 +97,7 @@
         <input id="skipExistingFiles" type="checkbox" />
         <label for="skipExistingFiles">Skip download if file already exists (based on download history)</label>
       </div>
-      
+
       <div id="download-history-container" class="option" style="margin-top: 10px;">
         <button id="clear-download-history" type="button">Clear Download History</button>
         <span style="margin-left: 10px;">
@@ -112,6 +119,10 @@
       <div class="option">
         <input id="include-producers" type="checkbox" />
         <label for="include-producers">Include producers as artists</label>
+      </div>
+      <div class="option">
+        <input id="ffmpeg-remux-hls-mp4" type="checkbox" />
+        <label for="ffmpeg-remux-hls-mp4">Remux HLS MP4/M4A using FFmpeg (Needed for M4A tagging)</label>
       </div>
 
       <hr />
@@ -150,7 +161,9 @@
         </div>
       </div>
     </form>
+  </div>
 
-    <script src="js/settings.js"></script>
-  </body>
+  <script type="module" src="./js/settings.js"></script>
+</body>
+
 </html>

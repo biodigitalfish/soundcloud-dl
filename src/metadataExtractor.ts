@@ -79,7 +79,7 @@ export class MetadataExtractor {
   ];
   static readonly promotions = ["free download", "video in description", "video in desc", "vid in desc", "Original Mix"];
 
-  constructor(private title: string, private username: string, private userPermalink?: string) {}
+  constructor(private title: string, private username: string, private userPermalink?: string) { }
 
   getArtists(): Artist[] {
     const title = this.preprocessTitle(this.title);
@@ -140,7 +140,7 @@ export class MetadataExtractor {
         type: ArtistType.Main,
       };
 
-      if (!!user.name) {
+      if (user.name) {
         if (artists.length > 0) {
           artists = [user, ...artists];
         } else {
@@ -183,7 +183,7 @@ export class MetadataExtractor {
   private removeTwitterHandle(artist: Artist) {
     artist.name = artist.name.replace(/^[@]+/, "");
 
-    const result = /^([^\(]+)\s?\(?\s?@.+\)?$/.exec(artist.name);
+    const result = /^([^(]+)\s?\(\s?@.+\)?$/.exec(artist.name);
 
     if (result && result.length > 1) {
       artist.name = result[1].trimEnd();
@@ -350,7 +350,7 @@ export class MetadataExtractor {
 
   private preprocessTitle(input: string) {
     // remove duplicated +s
-    input = input.replace(/\+[\+]+/g, "+");
+    input = input.replace(/\+([+]+)/g, "+");
 
     // remove promotions
     const promotions = MetadataExtractor.promotions.join("|");

@@ -118,8 +118,41 @@ const clearHistoryButton = document.querySelector<HTMLButtonElement>("#clear-dow
 
 async function clearDownloadHistory() {
   logger.logInfo("Clearing download history...");
+
   try {
+    // First, clear our internal history database
     await storeConfigValue("track-download-history", {});
+
+    // Now try to clear entries from Chrome's download history database
+    logger.logInfo("Attempting to clear browser download history for SoundCloud files...");
+    if (typeof chrome !== "undefined" && chrome.downloads && chrome.downloads.erase) {
+      try {
+        // Option 1: Try to clear all .mp3/.m4a files from SoundCloud 
+        const soundcloudRegexPattern = "SoundCloud.*\\.(mp3|m4a|wav)$";
+        chrome.downloads.erase({ filenameRegex: soundcloudRegexPattern, state: "complete" }, (erasedIds) => {
+          if (erasedIds && erasedIds.length > 0) {
+            logger.logInfo(`Cleared ${erasedIds.length} SoundCloud downloads from browser history.`);
+          } else {
+            logger.logInfo("No SoundCloud downloads found in browser history.");
+
+            // Option 2: Try a broader search for any audio files
+            const audioRegexPattern = "\\.(mp3|m4a|wav)$";
+            chrome.downloads.erase({ filenameRegex: audioRegexPattern, state: "complete" }, (audioErased) => {
+              if (audioErased && audioErased.length > 0) {
+                logger.logInfo(`Cleared ${audioErased.length} audio files from browser history.`);
+              } else {
+                logger.logInfo("No audio downloads found in browser history.");
+              }
+            });
+          }
+        });
+      } catch (eraseError) {
+        logger.logWarn("Failed to clear browser download history:", eraseError);
+      }
+    } else {
+      logger.logInfo("Browser does not support downloading history clearing API.");
+    }
+
     const originalText = clearHistoryButton.textContent;
     clearHistoryButton.textContent = "History Cleared!";
     clearHistoryButton.disabled = true;
@@ -129,7 +162,13 @@ async function clearDownloadHistory() {
     }, 2000); // Keep disabled for 2 seconds
   } catch (error) {
     logger.logError("Failed to clear download history", error);
-    // Optionally show an error message to the user
+    clearHistoryButton.textContent = "Error! See Console";
+    clearHistoryButton.style.backgroundColor = "#d30029";
+    setTimeout(() => {
+      clearHistoryButton.textContent = "Clear Download History";
+      clearHistoryButton.style.backgroundColor = "";
+      clearHistoryButton.disabled = false;
+    }, 3000);
   }
 }
 

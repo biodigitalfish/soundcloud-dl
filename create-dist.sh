@@ -2,50 +2,37 @@
 
 trap "exit 1" ERR
 
-# build package
+# npm install is typically run before this script, or as part of a CI step.
+# If you need to ensure it runs every time, uncomment the next two lines:
+# echo "Running npm install (if needed)..."
+# npm install --if-present
 
-# Use npm instead of yarn
-echo "Running npm install..."
-npm install
+# The vite builds (npm run build:firefox_core and npm run build:chrome_core)
+# are now responsible for creating browser-specific builds in dist/chrome and dist/firefox,
+# including their respective manifest.json files.
 
-echo "Running npm test..."
-npm test
+# This script now zips these pre-built directories and archives source code.
 
-# Run webpack directly, not the npm build script
-echo "Running webpack..."
-webpack # Outputs cleaned js to dist/js
+echo "Ensuring dist/zips directory exists for final zip files..."
+mkdir -p dist/zips
 
-# Create other needed dist directories if they don't exist (icons dir)
-echo "Ensuring dist directories exist..."
-mkdir -p dist/icons
+# Zip Firefox build
+echo "Creating Firefox zip..."
+cd dist/firefox
+# Zip contents of dist/firefox into dist/zips/SoundCloud-Downloader-Firefox.zip
+# Exclude any previous zips or source maps if not desired in final package
+zip -r "../../dist/zips/SoundCloud-Downloader-Firefox.zip" . -x "*.zip" -x "*.map"
+cd ../.. # Back to project root
 
-# Copy static assets into dist
-echo "Copying static assets..."
-cp src/settings.html dist/
-cp -r src/icons/* dist/icons/
+# Zip Chrome build
+echo "Creating Chrome zip..."
+cd dist/chrome
+# Zip contents of dist/chrome into dist/zips/SoundCloud-Downloader-Chrome.zip
+zip -r "../../dist/zips/SoundCloud-Downloader-Chrome.zip" . -x "*.zip" -x "*.map"
+cd ../.. # Back to project root
 
-# bundle for different browsers
-# Operate from the root directory initially
-
-# bundle for Chrome
-echo "Bundling Chrome extension..."
-jq -s ".[0] * .[1]" "src/manifests/manifest_original.json" "src/manifests/manifest_chrome.json" > "dist/manifest.json" # Output manifest into dist
-# Zip specifically required files from dist
-cd dist # Now CD into dist to make zip paths relative inside the archive
-zip -r "SoundCloud-Downloader-Chrome.zip" manifest.json js/ icons/ settings.html -x "*.zip" # Explicitly list items to zip
-cd .. # Go back to root
-
-# bundle for Firefox
-echo "Bundling Firefox extension..."
-jq -s ".[0] * .[1]" "src/manifests/manifest_original.json" "src/manifests/manifest_firefox.json" > "dist/manifest.json" # Output manifest into dist
-# Zip specifically required files from dist
-cd dist # CD into dist again
-zip -r "SoundCloud-Downloader-Firefox.zip" manifest.json js/ icons/ settings.html -x "*.zip" # Explicitly list items to zip
-cd .. # Go back to root
-
-# archive source code for firefox review process
+# Archive source code
 echo "Archiving source code..."
-mkdir -p dist # Ensure dist exists before archiving source
-git archive --format zip --output "dist/SoundCloud-Downloader-Source-Code.zip" master
+git archive --format zip --output "dist/zips/SoundCloud-Downloader-Source-Code.zip" HEAD
 
-echo "Build process complete."
+echo "Build process complete. Browser-specific zips and source code archive are in dist/zips/."

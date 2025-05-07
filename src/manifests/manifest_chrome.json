@@ -1,1 +1,74 @@
-{}
+{
+    "manifest_version": 3,
+    "name": "SoundCloud Downloader",
+    "version": "1.13.1",
+    "author": "NotTobi",
+    "description": "Adds download buttons for tracks on soundcloud.com",
+    "homepage_url": "https://github.com/NotTobi/soundcloud-dl",
+    "icons": {
+        "48": "icons/icon-48.png",
+        "64": "icons/icon-64.png",
+        "96": "icons/icon-96.png",
+        "128": "icons/icon-128.png"
+    },
+    "permissions": [
+        "downloads",
+        "webRequest",
+        "storage",
+        "declarativeNetRequest"
+    ],
+    "host_permissions": [
+        "*://*.soundcloud.com/*",
+        "*://*.sndcdn.com/*"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.soundcloud.com/*"
+            ],
+            "js": [
+                "js/content_loader.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "background": {
+        "service_worker": "js/background.js",
+        "type": "module"
+    },
+    "options_ui": {
+        "page": "settings.html"
+    },
+    "action": {
+        "default_icon": {
+            "48": "icons/icon-48.png",
+            "64": "icons/icon-64.png",
+            "96": "icons/icon-96.png",
+            "128": "icons/icon-128.png"
+        },
+        "default_title": "Soundcloud Downloader"
+    },
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "js/repostBlocker.js",
+                "js/config-*.js",
+                "js/content.js"
+            ],
+            "matches": [
+                "*://*.soundcloud.com/*"
+            ]
+        },
+        {
+            "resources": [
+                "ffmpeg-core/*"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';"
+    }
+}

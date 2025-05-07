@@ -1,6 +1,6 @@
 import { sanitizeFilenameForDownload } from "./download";
 
-const illegalCharacters = ["<", ">", ":", '"', "/", "\\", "|", "?", "*", , "\u0000"];
+const illegalCharacters = ["<", ">", ":", "\"", "/", "\\", "|", "?", "*", "\u0000"];
 
 describe("Sanitization of filenames", () => {
   test.each(illegalCharacters)("%s in filename", (character) => {

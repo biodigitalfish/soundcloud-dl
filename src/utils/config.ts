@@ -40,6 +40,7 @@ export interface Config {
   "enable-hls-rate-limiting": ConfigValue<boolean>;
   "hls-rate-limit-delay-ms": ConfigValue<number>;
   "track-download-history": ConfigValue<Record<string, { filename: string; timestamp: number }>>;
+  "ffmpeg-remux-hls-mp4": ConfigValue<boolean>;
 }
 
 type OnConfigValueChangedType = (key: keyof Config, value: any) => void;
@@ -69,6 +70,7 @@ const config: Config = {
   "enable-hls-rate-limiting": { sync: true, defaultValue: true },
   "hls-rate-limit-delay-ms": { sync: true, defaultValue: 200 },
   "track-download-history": { defaultValue: {} },
+  "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
 };
 
 export const configKeys = Object.keys(config) as Array<keyof Config>;
@@ -102,7 +104,7 @@ export async function storeConfigValue<TKey extends keyof Config>(key: TKey, val
     }
 
     if (entry.onChanged) entry.onChanged(value as never);
-  } catch (error) {
+  } catch (_error) {
     const reason = "Failed to store configuration value";
 
     logger.logError(reason, { key, value, sync });
@@ -160,6 +162,10 @@ export async function resetConfig() {
 }
 
 export function getConfigValue<TKey extends keyof Config>(key: TKey): Config[TKey]["value"] {
+  if (!config[key]) {
+    logger.logError(`[getConfigValue] Attempted to access config key '${key}' but it was undefined in the config object!`);
+    throw new Error(`Config key '${key}' is missing from the config object.`);
+  }
   return config[key].value;
 }
 
