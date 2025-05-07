@@ -106,8 +106,22 @@ export const onMessage = (callback: AsyncMessageCallback) => {
         callback(event.data.payload, simulatedSender)
           .catch(err => logger.logError("Error in onMessage callback (page context):", err));
       } else {
-        // This new else block will help understand why the condition failed, if it does.
-        logger.logWarn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
+        // If cond4 is false, it might be an outgoing message.
+        // Outgoing messages have:
+        // cond1=true (event.source === window)
+        // cond2=true (!!event.data)
+        // cond3=true (event.data.source === SCRIPT_ID)
+        // event.data.direction === "to-background-via-bridge" (which makes cond4 false)
+
+        if (cond1 && cond2 && cond3 && event.data && event.data.direction === "to-background-via-bridge") {
+          // This is an outgoing message (likely from sendMessageToBackend in this file)
+          // that this general listener caught. This is expected and should be ignored silently.
+          // logger.logDebug("[CompatStubs onMessage] Ignored self-posted outgoing message intended for the bridge.");
+        } else {
+          // The message failed the filter conditions for other reasons,
+          // or it was an incoming message with an unexpected structure/direction. This is worth warning about.
+          logger.logWarn(`[CompatStubs FILTER FAILED] Conditions: cond1=${cond1}, cond2=${cond2}, cond3=${cond3}, cond4=${cond4}. Full event.data: ${eventDataString}`);
+        }
       }
     });
   } else {
