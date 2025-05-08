@@ -24,7 +24,8 @@ const ATOM_DATA_HEAD_LENGTH = 16;
 
 const ATOM_HEADER_LENGTH = ATOM_HEAD_LENGTH + ATOM_DATA_HEAD_LENGTH;
 
-class Mp4 {
+// Make Mp4 class public and export it
+export class Mp4 {
   private readonly _metadataPath = ["moov", "udta", "meta", "ilst"];
   private _buffer: ArrayBuffer | null;
   private _bufferView: DataView | null;
@@ -310,23 +311,42 @@ class Mp4 {
 
     const curPath = [...path];
     const curName = curPath.shift();
+    this._logger.logDebug(`_findAtom: Searching for '${curName}' in ${atoms.length} atoms. Remaining path: [${curPath.join(",")}]`);
     const curElem = atoms.find((i) => i.name === curName);
 
-    if (curPath.length < 1) return curElem;
+    if (!curElem) {
+      this._logger.logDebug(`_findAtom: '${curName}' not found.`);
+      return null;
+    }
+    this._logger.logDebug(`_findAtom: Found '${curElem.name}' (length: ${curElem.length}, offset: ${curElem.offset})`);
 
-    if (!curElem) return null;
+    if (curPath.length < 1) {
+      this._logger.logDebug(`_findAtom: Path complete. Returning '${curElem.name}'.`);
+      // Before returning the final element, ensure its children are read if we expect them for data extraction
+      if (curElem.children === undefined) {
+        this._logger.logDebug(`_findAtom: Reading children for final element '${curElem.name}' before returning.`);
+        curElem.children = this._readChildAtoms(curElem);
+      }
+      return curElem;
+    }
 
+    // If we are not at the end of the path, we need to read children to traverse deeper.
     if (curElem.children === undefined) {
+      this._logger.logDebug(`_findAtom: Reading children for '${curElem.name}' to continue traversal.`);
       curElem.children = this._readChildAtoms(curElem);
     }
 
-    if (curElem.children.length < 1) return null;
+    if (!curElem.children || curElem.children.length < 1) {
+      this._logger.logDebug(`_findAtom: '${curElem.name}' has no children to continue search for [${curPath.join(",")}]`);
+      return null;
+    }
 
     return this._findAtom(curElem.children, curPath);
   }
 
   private _readChildAtoms(atom: Atom): Atom[] {
     const children: Atom[] = [];
+    this._logger.logDebug(`_readChildAtoms: Reading children for parent '${atom.name}' (length: ${atom.length}, offset: ${atom.offset})`);
 
     const childEnd = atom.offset + atom.length;
     let childOffset = atom.offset + ATOM_HEAD_LENGTH;
@@ -335,20 +355,45 @@ class Mp4 {
       childOffset += 4;
     } else if (atom.name === "stsd") {
       childOffset += 8;
+    } else if (atom.name === "ilst") {
+      // No special offset for ilst itself, its children start right after its header
+      this._logger.logDebug(`_readChildAtoms: Parent is '${atom.name}', standard child offset: ${childOffset}`);
+    } else if (atom.name && (atom.name === "©nam" || atom.name === "©ART" || atom.name === "©alb" || atom.name === "©day" || atom.name === "trkn" || atom.name === "scid" || atom.name === "covr" || atom.name === "©too")) {
+      // These are item atoms within 'ilst'. Their child is typically a 'data' atom.
+      this._logger.logDebug(`_readChildAtoms: Parent is item atom '${atom.name}', standard child offset: ${childOffset}`);
     }
 
+
+    let childCount = 0;
     while (true) {
-      if (childOffset >= childEnd) break;
+      if (childOffset >= childEnd) {
+        this._logger.logDebug(`_readChildAtoms: Reached end of parent '${atom.name}' at offset ${childOffset}. Found ${childCount} children.`);
+        break;
+      }
 
       const childAtom = this._readAtom(childOffset);
+      childCount++;
+      this._logger.logDebug(`_readChildAtoms: For parent '${atom.name}', read potential child ${childCount}: '${childAtom.name || "?"}' (length: ${childAtom.length}, offset: ${childAtom.offset})`);
 
-      if (!childAtom || childAtom.length < 1) break;
-
-      childOffset = childAtom.offset + childAtom.length;
+      if (!childAtom || childAtom.length < 1) {
+        this._logger.logWarn(`_readChildAtoms: Invalid child atom or zero length for parent '${atom.name}' at offset ${childOffset}. Stopping child read.`);
+        break;
+      }
+      // Additional check: child atom should not extend beyond parent
+      if (childAtom.offset + childAtom.length > childEnd) {
+        this._logger.logWarn(`_readChildAtoms: Child atom '${childAtom.name}' (offset ${childAtom.offset}, length ${childAtom.length}) exceeds parent '${atom.name}' (ends at ${childEnd}). Stopping.`);
+        break;
+      }
 
       children.push(childAtom);
-    }
+      childOffset = childAtom.offset + childAtom.length;
 
+      if (childOffset <= childAtom.offset) { // Safety break for invalid progression
+        this._logger.logError(`_readChildAtoms: Invalid offset progression for parent '${atom.name}'. Child offset ${childAtom.offset}, next offset ${childOffset}. Stopping.`);
+        break;
+      }
+    }
+    this._logger.logDebug(`_readChildAtoms: Finished reading for parent '${atom.name}'. Total children found: ${children.length}`);
     return children;
   }
 
@@ -528,6 +573,44 @@ class Mp4 {
     }
     return headLength;
   }
+
+  // Public method to find an atom and extract its data if it's a simple text atom
+  public findAndReadTextAtomData(path: string[]): string | null {
+    try {
+      const targetAtom = this._findAtom(this._atoms, path);
+      // 'ilst' items like 'scid' contain a child 'data' atom which holds the actual value.
+      if (targetAtom && targetAtom.children && targetAtom.children.length > 0) {
+        const dataAtom = targetAtom.children.find(child => child.name === "data");
+        if (dataAtom) {
+          // The _readAtom method only populates atom.name, atom.length, atom.offset.
+          // It does not populate atom.data with the content of the atom from the main buffer.
+          // The actual text data starts after the 'data' atom's own header.
+          // 'data' atom header: length(4), name 'data'(4), version/flags(4) = 12 bytes for this header part.
+          // The mp4TagWriter.ts uses ATOM_DATA_HEAD_LENGTH = 16, which also includes the 4 bytes for data-name, so it's: total_length(4), data_name(4), data_flags(4) -> this looks like it is for the 'data' atom in 'ilst > scid > data'
+          // The actual data is after this 'data' atom's header.
+          const textDataOffset = dataAtom.offset + ATOM_DATA_HEAD_LENGTH; // dataAtom.offset is start of 'data' atom, ATOM_DATA_HEAD_LENGTH is its header size
+          const textDataLength = dataAtom.length - ATOM_DATA_HEAD_LENGTH;
+
+          if (textDataLength > 0 && this._buffer && (textDataOffset + textDataLength) <= this._buffer.byteLength) {
+            const textDataBuffer = this._buffer.slice(textDataOffset, textDataOffset + textDataLength);
+            return new TextDecoder().decode(textDataBuffer);
+          } else {
+            this._logError(`Invalid data length or buffer bounds for atom at path ${path.join(" > ")}. Data atom length: ${dataAtom.length}, Header: ${ATOM_DATA_HEAD_LENGTH}`);
+            return null;
+          }
+        } else {
+          this._logError(`No 'data' child atom found for atom at path ${path.join(" > ")}`);
+          return null;
+        }
+      } else {
+        this._logError(`Target atom not found or has no children at path ${path.join(" > ")}`);
+      }
+      return null;
+    } catch (error) {
+      this._logError(`Error finding or reading text atom at path ${path.join(" > ")}: ${error.message}`);
+      return null;
+    }
+  }
 }
 
 export class Mp4TagWriter implements TagWriter {
@@ -666,6 +749,7 @@ export class Mp4TagWriter implements TagWriter {
       Mp4TagWriter._logError("Invalid value for SoundCloud Track ID");
       return;
     }
+    Mp4TagWriter._logger.logDebug(`[Mp4TagWriter] Attempting to set SoundCloudTrackID (scid): ${trackId}`); // Added log
     // Using a custom atom name "scid" for SoundCloud Track ID.
     // The addMetadataAtom method in the Mp4 class expects a 1-4 character name.
     this._mp4.addMetadataAtom("scid", trackId);

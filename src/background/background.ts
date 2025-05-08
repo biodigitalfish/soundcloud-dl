@@ -16,6 +16,7 @@ import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientI
 import { preInitializeFFmpegPool } from "../downloader/ffmpegManager";
 import { downloadTrack } from "../downloader/downloadHandler";
 import { Semaphore } from "./semaphore";
+import { Mp4 } from "../downloader/tagWriters/mp4TagWriter";
 
 // --- Main TrackError class for background.ts specific errors ---
 export class TrackError extends Error {
@@ -541,5 +542,107 @@ registerConfigChangeHandler("oauth-token", async (newValue) => {
 registerConfigChangeHandler("client-id", async (newClientId) => {
   logger.logInfo(`client-id config changed to: ${newClientId}. Updating DNR rule.`);
   await updateClientIdRule(newClientId as string | null | undefined);
+});
+
+// Example existing message listener structure (adapt to your actual structure)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  logger.logDebug("[Background] Received message:", message);
+
+  // --- START NEW HANDLERS ---
+  if (message.type === "EXTRACT_SCID_FROM_M4A") {
+    if (!message.payload || !message.payload.buffer || !message.payload.filename) {
+      logger.logError("[Background] Invalid payload for EXTRACT_SCID_FROM_M4A:", message.payload);
+      sendResponse({ error: "Invalid payload for SCID extraction." });
+      return true; // Indicate async response
+    }
+
+    const { filename, buffer } = message.payload;
+    logger.logInfo(`[Background] EXTRACT_SCID_FROM_M4A: Received buffer for ${filename} (size: ${buffer.byteLength})`);
+
+    try {
+      const mp4Parser = new Mp4(buffer as ArrayBuffer);
+      mp4Parser.parse(); // This initializes the atom structure
+
+      if (!mp4Parser.hasValidMp4Structure) {
+        logger.logWarn(`[Background] EXTRACT_SCID_FROM_M4A: File ${filename} does not have a valid MP4 structure.`);
+        sendResponse({ error: `File ${filename} is not a valid MP4.` });
+        return true;
+      }
+
+      // Path to the scid atom: moov -> udta -> meta -> ilst -> scid
+      const scidPath = ["moov", "udta", "meta", "ilst", "scid"];
+      const trackId = mp4Parser.findAndReadTextAtomData(scidPath);
+
+      if (trackId) {
+        logger.logInfo(`[Background] EXTRACT_SCID_FROM_M4A: Extracted SCID '${trackId}' from ${filename}`);
+        sendResponse({ trackId: trackId });
+      } else {
+        logger.logWarn(`[Background] EXTRACT_SCID_FROM_M4A: SCID atom not found or no data in ${filename}`);
+        sendResponse({ error: `SCID not found in ${filename}` });
+      }
+    } catch (error) {
+      logger.logError(`[Background] EXTRACT_SCID_FROM_M4A: Error parsing ${filename}:`, error);
+      sendResponse({ error: `Error parsing MP4 file ${filename}: ${error.message || error}` });
+    }
+    return true; // Indicate async response
+  }
+
+  if (message.type === "RESTORE_HISTORY_FROM_IDS") {
+    if (!message.payload || !Array.isArray(message.payload.trackIds)) {
+      logger.logError("[Background] Invalid payload for RESTORE_HISTORY_FROM_IDS:", message.payload);
+      sendResponse({ error: "Invalid payload for history restoration." });
+      return true; // Indicate async response
+    }
+
+    const { trackIds } = message.payload;
+    logger.logInfo(`[Background] RESTORE_HISTORY_FROM_IDS: Received ${trackIds.length} track IDs to restore.`);
+
+    if (trackIds.length === 0) {
+      sendResponse({ message: "No track IDs provided to restore." });
+      return true;
+    }
+
+    // Async IIFE to handle storage operations
+    (async () => {
+      try {
+        const currentHistory = await getConfigValue("track-download-history") || {};
+        let restoredCount = 0;
+        trackIds.forEach(trackId => {
+          if (typeof trackId === "string" && trackId.trim() !== "") {
+            const key = `track-${trackId}`;
+            if (!currentHistory[key]) { // Only add if not already present, or decide on update logic
+              currentHistory[key] = {
+                filename: `Restored: TrackID ${trackId}`,
+                timestamp: Date.now()
+              };
+              restoredCount++;
+            } else {
+              logger.logDebug(`[Background] RESTORE_HISTORY_FROM_IDS: Track ${trackId} already in history, skipping.`);
+            }
+          }
+        });
+
+        await storeConfigValue("track-download-history", currentHistory);
+        logger.logInfo(`[Background] RESTORE_HISTORY_FROM_IDS: Successfully restored ${restoredCount} new tracks to history.`);
+        sendResponse({ message: `Successfully restored ${restoredCount} new tracks out of ${trackIds.length} to download history.` });
+      } catch (error) {
+        logger.logError("[Background] RESTORE_HISTORY_FROM_IDS: Error accessing storage or processing IDs:", error);
+        sendResponse({ error: `Error restoring history: ${error.message || error}` });
+      }
+    })();
+    return true; // Indicate async response for the storage operations
+  }
+  // --- END NEW HANDLERS ---
+
+  // ... your other existing message handlers ...
+  // For example:
+  // if (message.type === "GET_QUEUE_DATA") { ... }
+
+  // If no specific handler matched and it's not an async response, 
+  // you might have a fallback or just let it be.
+  // IMPORTANT: Ensure that sendResponse is called only once per message, 
+  // or not at all if you don't intend to send a response from a particular branch.
+  // If you have synchronous handlers that don't sendResponse, returning false or undefined is fine.
+  // For async handlers like these new ones, returning true is crucial.
 });
 

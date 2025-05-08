@@ -32,19 +32,21 @@ export class Logger {
   }
 
   logDebug(message: string, ...args: any[]) {
-    // Check global debug setting from localStorage
-    try {
-      const debugEnabled = window.localStorage.getItem("SOUNDCLOUD-DL-debugLoggingEnabled");
-      // Only log debug messages if the setting is explicitly "true"
-      // If it's missing or "false" or anything else, we disable debug logging.
-      if (debugEnabled !== "true") {
-        return; // Don't log debug messages if not explicitly enabled
-      }
-    } catch (e) {
-      // If localStorage access fails (e.g., in some contexts or if disabled), default to not logging debug.
-      console.warn("Logger: Failed to access localStorage for debug setting, disabling debug logs.", e);
-      return;
-    }
+
+    // // Check global debug setting from localStorage
+    // try {
+    //   const debugEnabled = window.localStorage.getItem("SOUNDCLOUD-DL-debugLoggingEnabled");
+    //   // Only log debug messages if the setting is explicitly "true"
+    //   // If it's missing or "false" or anything else, we disable debug logging.
+    //   if (debugEnabled !== "true") {
+
+    //     return; // Don't log debug messages if not explicitly enabled
+    //   }
+    // } catch (e) {
+    //   // If localStorage access fails (e.g., in some contexts or if disabled), default to not logging debug.
+    //   console.warn("Logger: Failed to access localStorage for debug setting, disabling debug logs.", e);
+    //   return;
+    // }
     // Proceed with logging if enabled and level allows
     this.log(LogLevel.Debug, message, ...args);
   }

@@ -12,6 +12,12 @@ import { DownloadData, TranscodingDetails } from "../types";
 import { Parser } from "m3u8-parser";
 import { createURLFromBlob, revokeURL, isServiceWorkerContext } from "../utils/browser";
 
+// Force a log to test output from this file
+console.log("DOWNLOAD_HANDLER.TS IS BEING LOADED AND PARSED");
+const earlyTestLogger = Logger.create("DownloadHandler_EarlyTest", LogLevel.Debug);
+earlyTestLogger.logError("DOWNLOAD_HANDLER.TS - EARLY ERROR LOG TEST");
+earlyTestLogger.logDebug("DOWNLOAD_HANDLER.TS - EARLY DEBUG LOG TEST");
+
 // Re-define or import TrackError if it's thrown or caught here
 export class TrackError extends Error {
     constructor(message: string, trackId: number) {
@@ -494,6 +500,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
         // SECTION 5: Metadata Tagging (uses artistsString, titleString from SECTION 1)
         try {
             const setMetadata = getConfigValue("set-metadata");
+            logger.logDebug(`[Metadata Check Before If] TrackId: ${data.trackId}, setMetadata config: ${setMetadata}, streamBuffer exists: ${!!streamBuffer}`);
             if (setMetadata && streamBuffer) {
                 let writer: TagWriter | undefined;
                 const bufferForTagging = streamBuffer.slice(0);
@@ -534,6 +541,8 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     }
 
                     const tagWriterResult = await writer.getBuffer();
+                    logger.logDebug(`[Metadata] TagWriter result for TrackId ${data.trackId} (ext: ${data.fileExtension}): applied=${tagWriterResult.tagsApplied}, message='${tagWriterResult.message || "none"}'`);
+
                     if (tagWriterResult?.buffer?.byteLength > 0) {
                         taggedBuffer = tagWriterResult.buffer;
                     } else {

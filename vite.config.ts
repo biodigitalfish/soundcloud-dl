@@ -43,6 +43,8 @@ export default defineConfig({
                 // Copy popup files
                 { src: "src/popup/queue.html", dest: "src/popup" }, // Copies to dist/{browser}/src/popup/queue.html
                 { src: "src/popup/queue.css", dest: "src/popup" },  // Copies to dist/{browser}/src/popup/queue.css
+                // Copy restore_history.html
+                { src: "src/pages/restore_history.html", dest: "src/pages" }, // Added for restore_history.html
                 // Copy content-loader.js and rename it
                 {
                     src: "src/content/content-loader.js",
@@ -83,15 +85,18 @@ export default defineConfig({
                 "js/content.js": path.resolve(__dirname, "src/content/content.ts"),
                 "js/bridge-content-script.js": path.resolve(__dirname, "src/content/bridge-content-script.ts"), // Added bridge script
                 "js/repostBlocker.js": path.resolve(__dirname, "src/content/repostBlocker.ts"),
-                "src/popup/queue.js": path.resolve(__dirname, "src/popup/queue.ts") // Added popup script
+                "src/popup/queue.js": path.resolve(__dirname, "src/popup/queue.ts"), // Added popup script
+                "src/pages/restore_history.js": path.resolve(__dirname, "src/pages/restore_history.ts") // Added for restore_history.ts
             },
             output: {
                 format: "esm",
                 entryFileNames: (chunkInfo) => {
                     // Handles input keys like "js/background.js" -> "js/background-scdl.js"
                     // Handles input keys like "src/popup/queue.js" -> "src/popup/queue-scdl.js"
-                    if ((chunkInfo.name.startsWith("js/") || chunkInfo.name.startsWith("src/popup/")) && chunkInfo.name.endsWith(".js")) {
-                        const prefix = chunkInfo.name.startsWith("js/") ? "js/" : "src/popup/";
+                    // Handles input keys like "src/pages/restore_history.js" -> "src/pages/restore_history-scdl.js"
+                    if ((chunkInfo.name.startsWith("js/") || chunkInfo.name.startsWith("src/popup/") || chunkInfo.name.startsWith("src/pages/")) && chunkInfo.name.endsWith(".js")) {
+                        const prefix = chunkInfo.name.startsWith("js/") ? "js/" :
+                            chunkInfo.name.startsWith("src/popup/") ? "src/popup/" : "src/pages/";
                         const baseName = chunkInfo.name.slice(prefix.length, -3); // Removes prefix and ".js"
                         return `${prefix}${baseName}${fileNameSuffix}.js`;
                     }

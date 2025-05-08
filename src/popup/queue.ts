@@ -72,65 +72,32 @@ document.addEventListener("DOMContentLoaded", () => {
     logger.log("Queue popup DOM loaded. Fetching initial queue.");
     fetchAndRenderQueue();
 
-    // --- Restore History Logic ---
-    const directoryUploadInput = document.getElementById("directory-upload") as HTMLInputElement;
-    const processDirectoryButton = document.getElementById("process-directory-button") as HTMLButtonElement;
-    const restoreStatusDiv = document.getElementById("restore-status");
+    // --- Restore History Logic --- MODIFIED
+    const openRestorePageButton = document.getElementById("open-restore-history-page-button") as HTMLButtonElement;
 
-    let selectedFiles: FileList | null = null;
-
-    if (directoryUploadInput) {
-        directoryUploadInput.addEventListener("change", (event) => {
-            selectedFiles = (event.target as HTMLInputElement).files;
-            if (selectedFiles && selectedFiles.length > 0) {
-                logger.log(`[Popup] Selected ${selectedFiles.length} files/directories for history restore.`);
-                if (restoreStatusDiv) restoreStatusDiv.textContent = `${selectedFiles.length} items selected. Click "Process Directory".`;
-            } else {
-                if (restoreStatusDiv) restoreStatusDiv.textContent = "No directory selected.";
-            }
-        });
-    }
-
-    if (processDirectoryButton) {
-        processDirectoryButton.addEventListener("click", async () => {
-            if (!selectedFiles || selectedFiles.length === 0) {
-                logger.warn("[Popup] No files selected to process.");
-                if (restoreStatusDiv) restoreStatusDiv.textContent = "Please select a directory first.";
-                return;
-            }
-
-            if (restoreStatusDiv) restoreStatusDiv.textContent = "Processing directory...";
-            logger.log("[Popup] Processing directory for history restore. Files:", selectedFiles);
-
-            const fileDetails = Array.from(selectedFiles).map(file => ({
-                name: file.name,
-                path: (file as any).webkitRelativePath || file.name, // webkitRelativePath for directory structure
-                size: file.size,
-                type: file.type
-            }));
-
-            logger.log("[Popup] Extracted file details:", fileDetails);
-
-            // TODO: Implement actual parsing and sending message to background script
-            // For now, we'll just log what we have.
+    if (openRestorePageButton) {
+        openRestorePageButton.addEventListener("click", () => {
+            logger.log("[Popup] Opening Restore History page...");
             try {
-                // Example: Send to background (you'll need to define this message type and handler in background.ts)
-                /*
-                const response = await sendMessageToBackend({
-                    type: "PROCESS_UPLOADED_DIRECTORY",
-                    files: fileDetails
+                // Assuming 'browser' is available (e.g. via webextension-polyfill)
+                // or use 'chrome.tabs.create' directly if not using polyfill
+                const tabsApi = typeof browser !== "undefined" ? browser.tabs : chrome.tabs;
+                tabsApi.create({
+                    url: chrome.runtime.getURL("src/pages/restore_history.html") // Adjust path if necessary based on your build output
                 });
-                logger.log("[Popup] Response from background after processing directory:", response);
-                if (restoreStatusDiv) restoreStatusDiv.textContent = "Directory processing initiated. Check background logs.";
-                */
-                if (restoreStatusDiv) restoreStatusDiv.textContent = `Processing ${fileDetails.length} files. See console for details. (Actual processing TBD)`;
-                logger.log("[Popup] Placeholder: Would send file details to background for processing.");
-
             } catch (error) {
-                logger.error("[Popup] Error sending directory data to background:", error);
-                if (restoreStatusDiv) restoreStatusDiv.textContent = "Error initiating processing. See console.";
+                logger.error("[Popup] Error opening restore history page:", error);
+                // Optionally, display an error message in the popup itself
+                if (queueContainer) { // Re-using queueContainer for a quick error message spot
+                    const errorDiv = document.createElement("p");
+                    errorDiv.textContent = "Error: Could not open the restore history page. See console.";
+                    errorDiv.style.color = "red";
+                    queueContainer.appendChild(errorDiv);
+                }
             }
         });
+    } else {
+        logger.warn("[Popup] 'Open Restore Page' button not found.");
     }
     // --- End Restore History Logic ---
 });

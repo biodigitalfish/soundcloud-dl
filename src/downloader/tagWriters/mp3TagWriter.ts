@@ -1,6 +1,9 @@
 import { ID3Writer } from "browser-id3-writer";
 import { TagWriter } from "./tagWriter";
 import type { TagWriterOutput } from "./tagWriter";
+import { Logger } from "../../utils/logger";
+
+const logger = Logger.create("Mp3TagWriter");
 
 export class Mp3TagWriter implements TagWriter {
   private writer: ID3Writer;
@@ -67,6 +70,7 @@ export class Mp3TagWriter implements TagWriter {
 
   setSoundCloudTrackId(trackId: string): void {
     if (!trackId) throw new Error("Invalid value for SoundCloud Track ID");
+    logger.logDebug(`Attempting to set SoundCloudTrackID: ${trackId}`);
     // Using TXXX frame for user-defined text information
     // Description: A unique identifier for the source of this custom ID
     // Text: The actual track ID
