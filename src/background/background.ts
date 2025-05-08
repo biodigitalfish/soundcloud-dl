@@ -40,11 +40,86 @@ export interface QueueItem {
   error?: string;
   tabId?: number; // Original tabId that requested it
   title?: string; // Optional: to be fetched or set later for display
+  artworkUrl?: string; // Added for UI
   addedAt: number; // Timestamp when added to queue
 }
 
 export const downloadQueue: QueueItem[] = [];
 let isProcessingQueue = false; // Simple flag to prevent concurrent processing for now
+
+// --- QUEUE PERSISTENCE (Using direct storage access) ---
+const QUEUE_STORAGE_KEY = "persistentDownloadQueue_v1"; // Added version suffix
+
+// Function to save the current queue state to storage
+export async function saveQueueState(): Promise<void> {
+  try {
+    // Use a deep copy to avoid storing references that might change
+    const queueToSave = JSON.parse(JSON.stringify(downloadQueue));
+    await chrome.storage.local.set({ [QUEUE_STORAGE_KEY]: queueToSave });
+    logger.logDebug("[Queue Persistence] Queue state saved.");
+  } catch (error) {
+    logger.logError("[Queue Persistence] Failed to save queue state:", error);
+  }
+}
+
+// Function to load the queue state from storage on startup
+async function loadAndInitializeQueue(): Promise<void> {
+  try {
+    const storageResult = await chrome.storage.local.get(QUEUE_STORAGE_KEY);
+    const savedQueue = storageResult[QUEUE_STORAGE_KEY]; // Access the value using the key
+
+    if (Array.isArray(savedQueue)) {
+      logger.logInfo(`[Queue Persistence] Loading ${savedQueue.length} items from storage (key: ${QUEUE_STORAGE_KEY}).`);
+      const restoredQueue: QueueItem[] = [];
+      let itemsReset = 0;
+      // Iterate with proper type checking
+      for (const item of savedQueue as any[]) { // Iterate as any[] for flexibility
+        // Basic validation: Check essential properties and types
+        if (item &&
+          typeof item.id === "string" &&
+          typeof item.type === "string" &&
+          typeof item.status === "string" &&
+          typeof item.url === "string" &&
+          typeof item.addedAt === "number" &&
+          item.originalMessage !== undefined) {
+          const queueItem = item as QueueItem; // Now cast to QueueItem
+          if (queueItem.status === "processing") {
+            queueItem.status = "pending"; // Reset interrupted processing items
+            queueItem.progress = 0; // Reset progress too
+            itemsReset++;
+          }
+          restoredQueue.push(queueItem);
+        } else {
+          logger.logWarn("[Queue Persistence] Discarding invalid item from saved queue:", item);
+        }
+      }
+      // Replace in-memory queue completely
+      downloadQueue.splice(0, downloadQueue.length, ...restoredQueue);
+      logger.logInfo(`[Queue Persistence] Queue initialized. ${itemsReset} items reset from processing to pending.`);
+      broadcastQueueUpdate(); // Notify UI of loaded queue
+      triggerProcessQueue(); // Check if any pending items need processing
+    } else {
+      logger.logInfo("[Queue Persistence] No saved queue found or invalid format.");
+    }
+  } catch (error) {
+    const logMessage = "[Queue Persistence] Failed to load queue state";
+    if (error instanceof Error) {
+      // Construct a single string message for the logger
+      const errorMessage = error.message || "[No message property]";
+      const errorStack = error.stack || "[No stack trace]";
+      logger.logError(`${logMessage}: ${errorMessage}\nStack: ${errorStack}`);
+    } else if (error) {
+      // For truthy non-Error objects, log their string representation safely.
+      logger.logError(`${logMessage}. Caught non-Error object: ${String(error)}`);
+    } else {
+      // For null/undefined errors.
+      logger.logError(`${logMessage}. An undefined or null error was caught.`);
+      // Log the raw problematic value directly to console for inspection, as it might be unusual.
+      console.error("[Queue Persistence] Raw undefined/null error value that was caught by loadAndInitializeQueue:", error);
+    }
+  }
+}
+// --- END QUEUE PERSISTENCE ---
 
 // Function to broadcast queue changes (simple version)
 export const broadcastQueueUpdate = () => {
@@ -73,6 +148,13 @@ export const broadcastQueueUpdate = () => {
 const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
   logger.logInfo(`[QueueProcessor _executeDownloadTask] Starting task for ID: ${item.id}, Type: ${item.type}, URL: ${item.url}`);
   item.status = "processing";
+  await saveQueueState(); // <<< ADDED SAVE (Task started)
+  // Attempt to set title and artwork early if possible
+  if (item.originalMessage?.track?.title) item.title = item.originalMessage.track.title;
+  if (item.originalMessage?.track?.artwork_url) item.artworkUrl = item.originalMessage.track.artwork_url;
+  else if (item.originalMessage?.set?.title) item.title = item.originalMessage.set.title;
+  else if (item.originalMessage?.set?.artwork_url) item.artworkUrl = item.originalMessage.set.artwork_url;
+
   broadcastQueueUpdate(); // Broadcast status change
   if (item.tabId) {
     sendDownloadProgress(item.tabId, item.id, 0, undefined, "Resuming");
@@ -85,7 +167,7 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
         sendDownloadProgress(item.tabId, item.id, progress, undefined, browserDownloadId ? undefined : "Resuming", browserDownloadId);
       }
       // Broadcast frequent progress updates (maybe throttle this later)
-      broadcastQueueUpdate();
+      // broadcastQueueUpdate(); 
     }
   };
 
@@ -101,9 +183,13 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       if (!track || track.kind !== "track") {
         throw new Error(`Failed to resolve URL to a valid track: ${trackUrl}`);
       }
+      item.title = track.title; // Ensure title is updated
+      item.artworkUrl = track.artwork_url; // Ensure artwork is updated
+      broadcastQueueUpdate(); // Update with title/artwork before download starts
       logger.logInfo(`[QueueProcessor _executeDownloadTask] Track resolved: ${track.title}. Starting download for item ${item.id}`);
       await downloadTrack(track, undefined, undefined, undefined, reportProgressForQueueItem);
       item.status = "completed";
+      await saveQueueState(); // <<< ADDED SAVE (Task completed)
       logger.logInfo(`[QueueProcessor _executeDownloadTask] DOWNLOAD complete for item ${item.id}: ${track.title}`);
       // --- Simulation code removed --- 
 
@@ -117,6 +203,10 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       if (!set || !set.tracks || set.tracks.length === 0) {
         throw new Error(`Failed to resolve URL to a valid playlist or playlist is empty: ${setUrl}`);
       }
+      item.title = set.title; // Ensure title is updated
+      // Artwork for set will be assigned after fetching track details
+      // item.artworkUrl = set.artwork_url; // REMOVED - Playlist type might not have this
+      // broadcastQueueUpdate(); // Broadcast moved to after track fetch
 
       // --- Fetch Full Track Details --- 
       const trackIds = set.tracks.map((t) => t.id);
@@ -137,6 +227,13 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       }
       logger.logInfo(`[QueueProcessor _executeDownloadTask] Fetched full details for ${allFullTracks.length} tracks.`);
       // --- End Fetch Full Track Details --- 
+
+      // --- Assign artwork from first track --- ADDED
+      if (!item.artworkUrl && allFullTracks.length > 0) {
+        item.artworkUrl = allFullTracks[0].artwork_url; // Use first track's artwork as fallback/primary for set
+      }
+      broadcastQueueUpdate(); // Broadcast update with fetched title/artwork now
+      // --- End Assign artwork ---
 
       const progresses: { [trackId: number]: number } = {};
       let encounteredError = false;
@@ -194,11 +291,13 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       if (encounteredError) {
         item.status = "error";
         item.error = "One or more tracks failed to download within the set.";
+        await saveQueueState(); // <<< ADDED SAVE (Task errored)
         logger.logWarn(`[Queue Set ${item.id}] DOWNLOAD_SET completed with errors. Last individual error logged was: ${lastError || "None recorded"}`);
         if (item.tabId) sendDownloadProgress(item.tabId, item.id, 102, item.error);
       } else {
         item.status = "completed";
         item.progress = 101; // Explicitly set 101
+        await saveQueueState(); // <<< ADDED SAVE (Task completed)
         logger.logInfo(`[Queue Set ${item.id}] DOWNLOAD_SET completed successfully.`);
         if (item.tabId) sendDownloadProgress(item.tabId, item.id, 101);
       }
@@ -207,17 +306,20 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       logger.logWarn(`[QueueProcessor _executeDownloadTask] DOWNLOAD_SET_RANGE for ${item.id} not yet implemented in queue processor.`);
       item.status = "error";
       item.error = "Set range downloads via queue not yet implemented.";
+      await saveQueueState(); // <<< ADDED SAVE (Task errored)
       if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error);
     } else {
       logger.logError(`[QueueProcessor _executeDownloadTask] Unknown item type: ${item.type} for item ID: ${item.id}`);
       item.status = "error";
       item.error = "Unknown download type";
+      await saveQueueState(); // <<< ADDED SAVE (Task errored)
       if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error);
     }
   } catch (err: any) {
     logger.logError(`[QueueProcessor _executeDownloadTask] Error processing item ${item.id}:`, err);
     item.status = "error";
     item.error = err.message || "Unknown error during processing";
+    await saveQueueState(); // <<< ADDED SAVE (Task errored)
     if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error, undefined);
   } finally {
     // Broadcast final status change regardless of success/error
@@ -244,6 +346,7 @@ const processQueue = async () => {
     if (finalIndex !== -1 && (downloadQueue[finalIndex].status === "completed" || downloadQueue[finalIndex].status === "error")) {
       logger.logInfo(`[QueueProcessor] Removing finalized item ${downloadQueue[finalIndex].id} (Status: ${downloadQueue[finalIndex].status}) from queue.`);
       downloadQueue.splice(finalIndex, 1);
+      await saveQueueState(); // <<< ADDED SAVE (Item removed)
       broadcastQueueUpdate(); // Broadcast removal
     }
   } else {
@@ -304,9 +407,14 @@ logger.logInfo("Starting with version: " + manifest.version);
 onMessage(handleIncomingMessage);
 logger.logInfo("Initial message listener registered.");
 
-// Load configuration and THEN register message listener AND SET INITIAL DNR RULE
+// Load configuration and THEN load queue, set rules etc.
 loadConfiguration(true).then(async () => {
-  logger.logInfo("Initial configuration loaded. Setting initial DNR rules.");
+  logger.logInfo("Initial configuration loaded.");
+
+  // --- Load the persistent queue AFTER config --- ADDED
+  await loadAndInitializeQueue();
+
+  logger.logInfo("Setting initial DNR rules.");
 
   const initialOauthToken = getConfigValue("oauth-token") as string | null | undefined;
   await updateAuthHeaderRule(initialOauthToken);
@@ -542,107 +650,5 @@ registerConfigChangeHandler("oauth-token", async (newValue) => {
 registerConfigChangeHandler("client-id", async (newClientId) => {
   logger.logInfo(`client-id config changed to: ${newClientId}. Updating DNR rule.`);
   await updateClientIdRule(newClientId as string | null | undefined);
-});
-
-// Example existing message listener structure (adapt to your actual structure)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  logger.logDebug("[Background] Received message:", message);
-
-  // --- START NEW HANDLERS ---
-  if (message.type === "EXTRACT_SCID_FROM_M4A") {
-    if (!message.payload || !message.payload.buffer || !message.payload.filename) {
-      logger.logError("[Background] Invalid payload for EXTRACT_SCID_FROM_M4A:", message.payload);
-      sendResponse({ error: "Invalid payload for SCID extraction." });
-      return true; // Indicate async response
-    }
-
-    const { filename, buffer } = message.payload;
-    logger.logInfo(`[Background] EXTRACT_SCID_FROM_M4A: Received buffer for ${filename} (size: ${buffer.byteLength})`);
-
-    try {
-      const mp4Parser = new Mp4(buffer as ArrayBuffer);
-      mp4Parser.parse(); // This initializes the atom structure
-
-      if (!mp4Parser.hasValidMp4Structure) {
-        logger.logWarn(`[Background] EXTRACT_SCID_FROM_M4A: File ${filename} does not have a valid MP4 structure.`);
-        sendResponse({ error: `File ${filename} is not a valid MP4.` });
-        return true;
-      }
-
-      // Path to the scid atom: moov -> udta -> meta -> ilst -> scid
-      const scidPath = ["moov", "udta", "meta", "ilst", "scid"];
-      const trackId = mp4Parser.findAndReadTextAtomData(scidPath);
-
-      if (trackId) {
-        logger.logInfo(`[Background] EXTRACT_SCID_FROM_M4A: Extracted SCID '${trackId}' from ${filename}`);
-        sendResponse({ trackId: trackId });
-      } else {
-        logger.logWarn(`[Background] EXTRACT_SCID_FROM_M4A: SCID atom not found or no data in ${filename}`);
-        sendResponse({ error: `SCID not found in ${filename}` });
-      }
-    } catch (error) {
-      logger.logError(`[Background] EXTRACT_SCID_FROM_M4A: Error parsing ${filename}:`, error);
-      sendResponse({ error: `Error parsing MP4 file ${filename}: ${error.message || error}` });
-    }
-    return true; // Indicate async response
-  }
-
-  if (message.type === "RESTORE_HISTORY_FROM_IDS") {
-    if (!message.payload || !Array.isArray(message.payload.trackIds)) {
-      logger.logError("[Background] Invalid payload for RESTORE_HISTORY_FROM_IDS:", message.payload);
-      sendResponse({ error: "Invalid payload for history restoration." });
-      return true; // Indicate async response
-    }
-
-    const { trackIds } = message.payload;
-    logger.logInfo(`[Background] RESTORE_HISTORY_FROM_IDS: Received ${trackIds.length} track IDs to restore.`);
-
-    if (trackIds.length === 0) {
-      sendResponse({ message: "No track IDs provided to restore." });
-      return true;
-    }
-
-    // Async IIFE to handle storage operations
-    (async () => {
-      try {
-        const currentHistory = await getConfigValue("track-download-history") || {};
-        let restoredCount = 0;
-        trackIds.forEach(trackId => {
-          if (typeof trackId === "string" && trackId.trim() !== "") {
-            const key = `track-${trackId}`;
-            if (!currentHistory[key]) { // Only add if not already present, or decide on update logic
-              currentHistory[key] = {
-                filename: `Restored: TrackID ${trackId}`,
-                timestamp: Date.now()
-              };
-              restoredCount++;
-            } else {
-              logger.logDebug(`[Background] RESTORE_HISTORY_FROM_IDS: Track ${trackId} already in history, skipping.`);
-            }
-          }
-        });
-
-        await storeConfigValue("track-download-history", currentHistory);
-        logger.logInfo(`[Background] RESTORE_HISTORY_FROM_IDS: Successfully restored ${restoredCount} new tracks to history.`);
-        sendResponse({ message: `Successfully restored ${restoredCount} new tracks out of ${trackIds.length} to download history.` });
-      } catch (error) {
-        logger.logError("[Background] RESTORE_HISTORY_FROM_IDS: Error accessing storage or processing IDs:", error);
-        sendResponse({ error: `Error restoring history: ${error.message || error}` });
-      }
-    })();
-    return true; // Indicate async response for the storage operations
-  }
-  // --- END NEW HANDLERS ---
-
-  // ... your other existing message handlers ...
-  // For example:
-  // if (message.type === "GET_QUEUE_DATA") { ... }
-
-  // If no specific handler matched and it's not an async response, 
-  // you might have a fallback or just let it be.
-  // IMPORTANT: Ensure that sendResponse is called only once per message, 
-  // or not at all if you don't intend to send a response from a particular branch.
-  // If you have synchronous handlers that don't sendResponse, returning false or undefined is fine.
-  // For async handlers like these new ones, returning true is crucial.
 });
 

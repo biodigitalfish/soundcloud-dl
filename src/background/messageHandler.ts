@@ -15,7 +15,8 @@ import { loadConfigValue, storeConfigValue, getConfigValue, loadConfiguration, c
 import { MetadataExtractor } from "../downloader/metadataExtractor";
 import { eraseDownloadHistoryEntry } from "../utils/browser";
 import { Semaphore } from "./semaphore";
-import { downloadQueue, QueueItem, triggerProcessQueue, broadcastQueueUpdate } from "./background";
+import { downloadQueue, QueueItem, triggerProcessQueue, broadcastQueueUpdate, saveQueueState } from "./background";
+import { Mp4 } from "../downloader/tagWriters/mp4TagWriter";
 
 // Message Type Constants
 export const DOWNLOAD_SET = "DOWNLOAD_SET";
@@ -40,7 +41,10 @@ const soundcloudApi = new SoundCloudApi();
 const logger = Logger.create("MessageHandler", LogLevel.Debug);
 
 // Main message handling function
-export async function handleIncomingMessage(message: DownloadRequest, sender: chrome.runtime.MessageSender) {
+// Temporarily using 'any' for message type to bypass linter issues with 'payload'.
+// TODO: Define proper union type for BackgroundMessage (DownloadRequest | ExtractScidRequest | RestoreHistoryRequest)
+// and use that here, then import it.
+export async function handleIncomingMessage(message: any, sender: chrome.runtime.MessageSender) {
     // --- Add critical logging at the very beginning ---
     let receivedMessageForLog = {};
     try {
@@ -50,7 +54,12 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
     }
     logger.logDebug("[MessageHandler DEBUG] Received message:", receivedMessageForLog);
 
-    const typesAllowedWithoutDownloadId = [GET_EXTENSION_CONFIG, GET_QUEUE_DATA];
+    const typesAllowedWithoutDownloadId = [
+        GET_EXTENSION_CONFIG,
+        GET_QUEUE_DATA,
+        "EXTRACT_SCID_FROM_M4A",
+        "RESTORE_HISTORY_FROM_IDS"
+    ];
     if (!message || (message.downloadId === undefined && message.type !== undefined && !typesAllowedWithoutDownloadId.includes(message.type))) {
         logger.logError(
             `CRITICAL: MessageHandler received message with type ${message.type} that requires a downloadId, but it was missing!`,
@@ -113,7 +122,8 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
         };
 
         downloadQueue.push(queueItem);
-        logger.logDebug(`[MessageHandler] Item added to queue. Current queue size: ${downloadQueue.length}`, queueItem);
+        await saveQueueState();
+        logger.logDebug(`[MessageHandler] Item added to queue and saved. Current queue size: ${downloadQueue.length}`, queueItem);
         broadcastQueueUpdate(); // Broadcast change after adding
 
         // Acknowledge to content script
@@ -132,6 +142,82 @@ export async function handleIncomingMessage(message: DownloadRequest, sender: ch
         // The promise from handleIncomingMessage should resolve with the ackPayload
         // The actual download processing is now detached.
         return Promise.resolve(ackPayload);
+
+    } else if (type === "EXTRACT_SCID_FROM_M4A") {
+        if (!message.payload || !message.payload.buffer || !message.payload.filename) {
+            logger.logError("[MessageHandler] Invalid payload for EXTRACT_SCID_FROM_M4A:", message.payload);
+            // No sendResponse here as it might be handled by original onMessage in background if error occurs early
+            // However, for a clean API, this function should manage its response.
+            // Let's assume sendResponse is available if called from a context that provides it.
+            // The background.ts onMessage wrapper should handle sending the response.
+            return Promise.reject({ error: "Invalid payload for SCID extraction." }); // Should be caught by caller
+        }
+
+        const { filename, buffer } = message.payload as { filename: string, buffer: ArrayBuffer }; // Type assertion
+        logger.logInfo(`[MessageHandler] EXTRACT_SCID_FROM_M4A: Received buffer for ${filename} (size: ${buffer.byteLength})`);
+
+        try {
+            const mp4Parser = new Mp4(buffer);
+            mp4Parser.parse();
+
+            if (!mp4Parser.hasValidMp4Structure) {
+                logger.logWarn(`[MessageHandler] EXTRACT_SCID_FROM_M4A: File ${filename} does not have a valid MP4 structure.`);
+                return Promise.resolve({ error: `File ${filename} is not a valid MP4.` });
+            }
+
+            const scidPath = ["moov", "udta", "meta", "ilst", "scid"];
+            const trackId = mp4Parser.findAndReadTextAtomData(scidPath);
+
+            if (trackId) {
+                logger.logInfo(`[MessageHandler] EXTRACT_SCID_FROM_M4A: Extracted SCID '${trackId}' from ${filename}`);
+                return Promise.resolve({ trackId: trackId });
+            } else {
+                logger.logWarn(`[MessageHandler] EXTRACT_SCID_FROM_M4A: SCID atom not found or no data in ${filename}`);
+                return Promise.resolve({ error: `SCID not found in ${filename}` });
+            }
+        } catch (error: any) {
+            logger.logError(`[MessageHandler] EXTRACT_SCID_FROM_M4A: Error parsing ${filename}:`, error);
+            return Promise.resolve({ error: `Error parsing MP4 file ${filename}: ${error.message || error}` });
+        }
+
+    } else if (type === "RESTORE_HISTORY_FROM_IDS") {
+        if (!message.payload || !Array.isArray(message.payload.trackIds)) {
+            logger.logError("[MessageHandler] Invalid payload for RESTORE_HISTORY_FROM_IDS:", message.payload);
+            return Promise.reject({ error: "Invalid payload for history restoration." });
+        }
+
+        const { trackIds } = message.payload as { trackIds: string[] }; // Type assertion
+        logger.logInfo(`[MessageHandler] RESTORE_HISTORY_FROM_IDS: Received ${trackIds.length} track IDs to restore.`);
+
+        if (trackIds.length === 0) {
+            return Promise.resolve({ message: "No track IDs provided to restore." });
+        }
+
+        try {
+            const currentHistory = await getConfigValue("track-download-history") || {};
+            let restoredCount = 0;
+            trackIds.forEach(trackId => {
+                if (typeof trackId === "string" && trackId.trim() !== "") {
+                    const key = `track-${trackId}`;
+                    if (!currentHistory[key]) {
+                        currentHistory[key] = {
+                            filename: `Restored: TrackID ${trackId}`,
+                            timestamp: Date.now()
+                        };
+                        restoredCount++;
+                    } else {
+                        logger.logDebug(`[MessageHandler] RESTORE_HISTORY_FROM_IDS: Track ${trackId} already in history, skipping.`);
+                    }
+                }
+            });
+
+            await storeConfigValue("track-download-history", currentHistory);
+            logger.logInfo(`[MessageHandler] RESTORE_HISTORY_FROM_IDS: Successfully restored ${restoredCount} new tracks to history.`);
+            return Promise.resolve({ message: `Successfully restored ${restoredCount} new tracks out of ${trackIds.length} to download history.` });
+        } catch (error: any) {
+            logger.logError("[MessageHandler] RESTORE_HISTORY_FROM_IDS: Error accessing storage or processing IDs:", error);
+            return Promise.resolve({ error: `Error restoring history: ${error.message || error}` }); // Resolve with error for client
+        }
 
     } else if (type === PAUSE_DOWNLOAD) {
         if (!tabId) { /* ... error ... */ return { error: "Pause ops require tabId" }; }

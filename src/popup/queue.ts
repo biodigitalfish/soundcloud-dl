@@ -5,6 +5,10 @@ import { QueueItem } from "../background/background"; // Assuming QueueItem is e
 const logger = console; // Simple logger for popup
 
 const queueContainer = document.getElementById("queue-container");
+let queueUpdateIntervalId: number | null = null; // Variable to hold the interval ID
+
+// Placeholder image for missing artwork
+const PLACEHOLDER_ARTWORK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23e0e0e0'/%3E%3Ctext x='50' y='55' font-size='20' text-anchor='middle' fill='%23aaa'%3E?%3C/text%3E%3C/svg%3E";
 
 function renderQueue(queue: QueueItem[]) {
     if (!queueContainer) return;
@@ -14,20 +18,33 @@ function renderQueue(queue: QueueItem[]) {
         return;
     }
 
-    // Basic rendering for now
-    let html = "<ul>";
+    let html = ""; // Build HTML string
     queue.forEach(item => {
-        html += `<li>
-            <strong>ID:</strong> ${item.id}<br>
-            <strong>Type:</strong> ${item.type}<br>
-            <strong>URL:</strong> ${item.url?.substring(0, 50)}...<br>
-            <strong>Status:</strong> ${item.status}<br>
-            ${item.progress !== undefined ? `<strong>Progress:</strong> ${item.progress.toFixed(1)}%<br>` : ""}
-            ${item.error ? `<strong>Error:</strong> ${item.error}<br>` : ""}
-            <strong>Added:</strong> ${new Date(item.addedAt).toLocaleTimeString()}
-        </li>`;
+        const artworkSrc = item.artworkUrl || PLACEHOLDER_ARTWORK;
+        const title = item.title || item.url?.split("/").pop() || "Untitled Track";
+        const progressValue = item.progress !== undefined && item.progress >= 0 && item.progress <= 100 ? item.progress : 0;
+        const isProcessingOrPending = item.status === "processing" || item.status === "pending";
+        const displayProgress = item.progress !== undefined && item.progress < 101; // Only show progress if it's not at a final state like 101/102
+
+        html += `
+            <div class="queue-item">
+                <img src="${artworkSrc}" alt="Artwork" class="queue-item-artwork" />
+                <div class="queue-item-details">
+                    <div class="queue-item-title" title="${title}">${title}</div>
+                    <div class="queue-item-url" title="${item.url}">Type: ${item.type}</div>
+                    <div class="queue-item-status">Status: <strong>${item.status}</strong></div>
+                    ${displayProgress ? `
+                        <div class="queue-item-progress-container">
+                            <span>Progress: ${item.progress?.toFixed(1)}%</span>
+                            <progress value="${progressValue}" max="100"></progress>
+                        </div>
+                    ` : ""}
+                    ${item.error ? `<div class="queue-item-error">Error: ${item.error}</div>` : ""}
+                    <div style="font-size: 0.8em; color: #888; margin-top: 5px;">Added: ${new Date(item.addedAt).toLocaleTimeString()} (ID: ${item.id.substring(0, 8)})</div>
+                </div>
+            </div>
+        `;
     });
-    html += "</ul>";
     queueContainer.innerHTML = html;
 }
 
@@ -69,8 +86,14 @@ onMessage(async (message: any, sender: any) => {
 
 // Initial fetch when popup opens
 document.addEventListener("DOMContentLoaded", () => {
-    logger.log("Queue popup DOM loaded. Fetching initial queue.");
-    fetchAndRenderQueue();
+    logger.log("Queue popup DOM loaded. Fetching initial queue and starting interval.");
+    fetchAndRenderQueue(); // Initial fetch
+
+    // Start interval to update queue every second
+    if (queueUpdateIntervalId !== null) {
+        clearInterval(queueUpdateIntervalId); // Clear any existing interval (defensive)
+    }
+    queueUpdateIntervalId = window.setInterval(fetchAndRenderQueue, 1000); // Update every 1 second
 
     // --- Restore History Logic --- MODIFIED
     const openRestorePageButton = document.getElementById("open-restore-history-page-button") as HTMLButtonElement;
@@ -100,6 +123,15 @@ document.addEventListener("DOMContentLoaded", () => {
         logger.warn("[Popup] 'Open Restore Page' button not found.");
     }
     // --- End Restore History Logic ---
+});
+
+// Clear the interval when the popup is closed/unloaded
+window.addEventListener("unload", () => {
+    if (queueUpdateIntervalId !== null) {
+        logger.log("Queue popup unloading. Clearing update interval.");
+        clearInterval(queueUpdateIntervalId);
+        queueUpdateIntervalId = null;
+    }
 });
 
 logger.log("Queue popup script loaded."); 

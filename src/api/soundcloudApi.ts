@@ -88,52 +88,69 @@ export class SoundCloudApi {
   // --- Retry with backoff utility ---
   private async retryWithBackoff<T>(
     fn: () => Promise<T>,
-    retries: number = 30,
+    retries: number = 3, // Default retries for most operations
     initialDelayMs: number = 2000, // 2 seconds
     contextString?: string
   ): Promise<T> {
-    // Check and wait for global backoff before starting any attempts
+    // Check and wait for global backoff before starting any attempts for this operation
     if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
       const waitTime = this.globalBackoffUntil - Date.now();
-      this.logger.logWarn(`[Global Backoff] Active. Waiting for ${waitTime / 1000}s before proceeding with ${contextString || "operation"}.`);
+      this.logger.logWarn(`[Global Backoff] Active. Waiting for ${Math.ceil(waitTime / 1000)}s before proceeding with ${contextString || "operation"}.`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
+      // Optimistically clear global backoff after this specific operation's wait,
+      // allowing it to proceed. If it fails again with 429, it will be re-set below.
+      this.logger.logInfo(`[Global Backoff] Wait completed for ${contextString || "operation"}. Optimistically clearing global trigger.`);
+      this.globalBackoffUntil = null;
     }
 
     let attempt = 0;
     let delay = initialDelayMs;
     while (attempt <= retries) {
       try {
-        // Re-check global backoff before each attempt, in case it was set by another concurrent operation
-        if (this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
+        // It's possible globalBackoffUntil was set by a *concurrent* operation
+        // between the initial check above and this attempt. Re-check.
+        if (attempt > 0 && this.globalBackoffUntil && Date.now() < this.globalBackoffUntil) {
           const waitTime = this.globalBackoffUntil - Date.now();
-          this.logger.logWarn(`[Global Backoff] Active during retry attempt. Waiting for ${waitTime / 1000}s for ${contextString || "operation"}.`);
+          this.logger.logWarn(`[Global Backoff] Re-activated during retries. Waiting for ${Math.ceil(waitTime / 1000)}s for ${contextString || "operation"}.`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
+          this.logger.logInfo(`[Global Backoff] Secondary wait completed for ${contextString || "operation"}. Optimistically clearing global trigger.`);
+          this.globalBackoffUntil = null; // Optimistic clear again
         }
 
         this.logger.logDebug(`[Retry] Attempt ${attempt + 1}/${retries + 1} for ${contextString || "operation"}`);
-        return await fn();
-      } catch (error) {
+        const result = await fn();
+
+        // If fn() was successful, and if global backoff was set by some other failing operation,
+        // this success can be a signal to clear it.
+        if (this.globalBackoffUntil !== null) {
+          this.logger.logInfo(`[${contextString || "operation"}] Succeeded. Clearing active global backoff trigger.`);
+          this.globalBackoffUntil = null;
+        }
+        return result;
+
+      } catch (error: any) { // Catch 'any' to handle different error types robustly
         if (error instanceof RateLimitError) {
           if (attempt < retries) {
             attempt++;
             this.logger.logWarn(`[Retry] Rate limit hit for ${contextString || "operation"}. Retrying in ${delay / 1000}s... (Attempt ${attempt + 1}/${retries + 1})`);
             await new Promise(resolve => setTimeout(resolve, delay));
-            delay *= 2; // Exponential backoff
+            delay = Math.min(delay * 2, 30000); // Exponential backoff, cap at 30s for local retries
           } else {
-            // Local retries exhausted for a RateLimitError, activate global backoff
-            this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts due to rate limit. Activating global backoff.`);
+            // Local retries exhausted for a RateLimitError, THIS is when we activate global backoff
+            this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts due to persistent rate limit. Activating global backoff.`);
             this.globalBackoffUntil = Date.now() + this.globalBackoffDurationMs;
             this.logger.logWarn(`[Global Backoff] Activated for ${this.globalBackoffDurationMs / 1000}s due to persistent rate limiting on ${contextString || "operation"}.`);
             throw error; // Re-throw the RateLimitError
           }
         } else {
-          this.logger.logError(`[Retry] Failed for ${contextString || "operation"} after ${attempt + 1} attempts or non-retryable error:`, error);
+          // Non-RateLimitError, or some other unexpected error from fn()
+          this.logger.logError(`[Retry] Failed for ${contextString || "operation"} with non-retryable or unexpected error after ${attempt + 1} attempts:`, error.message || error);
           throw error; // Re-throw non-RateLimitError or if retries exhausted
         }
       }
     }
-    // Should not be reached if logic is correct, but as a fallback:
-    const finalErrorMsg = `[Retry] Exhausted retries for ${contextString || "operation"} without success (this path should not be reached).`;
+    // Fallback for loop completion without return/throw (should ideally not be reached)
+    const finalErrorMsg = `[Retry] Exhausted retries for ${contextString || "operation"} without explicit success or failure handling.`;
     this.logger.logError(finalErrorMsg);
     throw new Error(finalErrorMsg);
   }
@@ -298,31 +315,66 @@ export class SoundCloudApi {
     }
   }
 
-  private async _fetchJsonInternal<T>(url: string) {
+  // Simplified _fetchJsonInternal: it focuses on fetching and throwing specific errors.
+  // Global backoff is handled by the caller (retryWithBackoff).
+  private async _fetchJsonInternal<T>(url: string, httpMethod: string = "GET", requestBody?: any): Promise<T> {
+    const headers: Record<string, string> = {
+      "Accept": "application/json",
+    };
+    if (httpMethod !== "GET" && httpMethod !== "HEAD") { // HEAD might also not have a body
+      headers["Content-Type"] = "application/json";
+    }
+
+    // TODO: Add client_id or OAuth token to URL or headers if necessary,
+    // this logic might exist elsewhere or need to be integrated here.
+    // For now, assuming `url` is the final URL.
+
+    let response: Response;
     try {
-      const resp = await fetch(url);
+      this.logger.logDebug(`[API Fetch] Attempting ${httpMethod} to ${url}`);
+      response = await fetch(url, {
+        method: httpMethod,
+        headers,
+        body: requestBody ? JSON.stringify(requestBody) : undefined,
+      });
+    } catch (networkError: any) {
+      this.logger.logError(`[API Fetch] Network error for ${httpMethod} ${url}: ${networkError.message}`, networkError);
+      // Throw a generic error for network issues; retryWithBackoff might retry these if configured to.
+      throw new Error(`Network error: ${networkError.message}`);
+    }
 
-      if (!resp.ok) {
-        if (resp.status === 429) {
-          const errorMsg = `Rate limited while fetching from ${url}. Please wait and try again later.`;
-          this.logger.logWarn(errorMsg);
-          throw new RateLimitError(errorMsg);
-        } else {
-          const errorMsg = `HTTP error ${resp.status} while fetching from ${url}`;
-          this.logger.logError(errorMsg);
-          throw new Error(errorMsg);
-        }
+    if (response.ok) {
+      const responseText = await response.text();
+      if (!responseText && (response.status === 204 || response.status === 202)) { // 204 No Content, 202 Accepted
+        this.logger.logDebug(`[API Fetch] Successful ${httpMethod} to ${url} with status ${response.status} (No Content).`);
+        return null as T; // Or appropriate representation for "no content"
       }
-
-      const json = (await resp.json()) as T;
-
-      if (!json) return null;
-
-      return json;
-    } catch (error) {
-      this.logger.logError("Failed to fetch JSON from", url);
-
-      return null;
+      if (!responseText) {
+        this.logger.logWarn(`[API Fetch] Successful ${httpMethod} to ${url} with status ${response.status} but received an empty response body.`);
+        // Depending on T, might return null or throw. For now, returning null.
+        return null as T;
+      }
+      try {
+        return JSON.parse(responseText) as T;
+      } catch (parseError: any) {
+        this.logger.logError(`[API Fetch] Successful ${httpMethod} to ${url} (status ${response.status}) but failed to parse JSON response: ${parseError.message}. Response text: "${responseText.substring(0, 100)}"`);
+        throw new Error(`JSON parsing error: ${parseError.message}`); // Propagate as a generic error
+      }
+    } else if (response.status === 429) {
+      const errorMsg = `Rate limited (429) while fetching ${httpMethod} ${url}.`;
+      this.logger.logWarn(errorMsg);
+      // Throw a specific error type that retryWithBackoff understands
+      throw new RateLimitError(errorMsg);
+    } else {
+      // Handle other HTTP errors (400, 401, 403, 404, 500, etc.)
+      const errorText = await response.text().catch(() => `Failed to read error response body for status ${response.status}`);
+      const errorMsg = `HTTP error ${response.status} ${response.statusText} for ${httpMethod} ${url}. Response: ${errorText.substring(0, 200)}`;
+      this.logger.logError(errorMsg);
+      // Throw a generic error; retryWithBackoff might retry some server errors (5xx) if configured,
+      // but typically won't retry client errors (4xx) other than 429.
+      // For simplicity here, we'll let retryWithBackoff decide based on the error type it receives.
+      // If it's not RateLimitError, it will likely be treated as a non-retryable error by the current retryWithBackoff logic.
+      throw new Error(errorMsg); // Generic error for other HTTP issues
     }
   }
 }

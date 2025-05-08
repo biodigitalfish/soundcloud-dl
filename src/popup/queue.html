@@ -8,19 +8,16 @@
 </head>
 
 <body>
-    <h1>Download Queue</h1>
+    <div class="header-container">
+        <h1>Download Queue</h1>
+        <button id="open-restore-history-page-button" class="button-secondary">Restore History</button>
+    </div>
     <div id="queue-container">
         <p>Queue will be displayed here.</p>
     </div>
 
-    <hr>
-    <h2>Restore Download History</h2>
-    <div id="restore-history-container">
-        <p>Open a dedicated page to select a directory containing your downloaded SoundCloud tracks to rebuild history.
-        </p>
-        <button id="open-restore-history-page-button">Open Restore Page</button>
-        <!-- Status div is removed as feedback will be on the new page -->
-    </div>
+    <hr class="footer-hr">
+    <!-- Removed Restore History section as it's now a button in the header -->
 
     <script type="module" src="queue-scdl.js"></script>
 </body>

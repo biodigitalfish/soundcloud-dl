@@ -76,7 +76,7 @@ export class Mp3TagWriter implements TagWriter {
     // Text: The actual track ID
     this.writer.setFrame("TXXX" as any, {
       description: "SoundCloudTrackID",
-      text: trackId,
+      value: trackId,
     });
   }
 

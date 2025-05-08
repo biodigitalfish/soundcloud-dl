@@ -1,10 +1,162 @@
 /* Basic styling for the queue popup */
 body {
-  font-family: sans-serif;
-  min-width: 300px;
+  font-family: sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue';
+  min-width: 350px; /* Increased min-width for more space */
+  max-width: 500px;
   padding: 10px;
+  background-color: #f4f4f4;
+  color: #333;
+}
+
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 10px;
+}
+
+.header-container h1 {
+  margin: 0;
+  font-size: 1.4em;
+  color: #111;
 }
 
 #queue-container {
   margin-top: 10px;
+  max-height: 400px; /* Limit height and make it scrollable */
+  overflow-y: auto;
+  padding-right: 5px; /* Space for scrollbar */
+}
+
+.queue-item {
+  display: flex;
+  align-items: flex-start; /* Align items to the top */
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.queue-item-artwork {
+  width: 60px; /* Fixed width for artwork */
+  height: 60px; /* Fixed height for artwork */
+  border-radius: 4px;
+  margin-right: 12px;
+  object-fit: cover; /* Ensure artwork covers the area */
+  border: 1px solid #eee;
+}
+
+.queue-item-details {
+  flex-grow: 1;
+  font-size: 0.9em;
+}
+
+.queue-item-details strong {
+  color: #555;
+}
+
+.queue-item-title {
+  font-weight: bold;
+  font-size: 1.05em;
+  color: #222;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px; /* Adjust as needed */
+}
+
+.queue-item-url {
+  font-size: 0.8em;
+  color: #777;
+  margin-bottom: 6px;
+  word-break: break-all; /* Break long URLs */
+}
+
+.queue-item-status {
+  margin-bottom: 6px;
+}
+
+.queue-item-progress-container {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.queue-item-progress-container progress {
+  width: 100%;
+  height: 10px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+}
+
+/* Styling for progress bar appearance */
+.queue-item-progress-container progress::-webkit-progress-bar {
+  background-color: #e0e0e0;
+  border-radius: 5px;
+}
+
+.queue-item-progress-container progress::-webkit-progress-value {
+  background-color: #4CAF50; /* Green progress */
+  border-radius: 5px;
+  transition: width 0.2s ease-in-out;
+}
+
+.queue-item-progress-container progress::-moz-progress-bar { /* Firefox */
+  background-color: #4CAF50;
+  border-radius: 5px;
+  transition: width 0.2s ease-in-out;
+}
+
+.queue-item-error {
+  color: #D8000C; /* Red for errors */
+  background-color: #FFD2D2;
+  border: 1px solid #D8000C;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 0.85em;
+  margin-top: 5px;
+}
+
+.button-secondary {
+    padding: 6px 10px;
+    font-size: 0.85em;
+    background-color: #e7e7e7;
+    color: #333;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.button-secondary:hover {
+    background-color: #dcdcdc;
+}
+
+.footer-hr {
+    margin-top: 15px;
+    border: 0;
+    border-top: 1px solid #ddd;
+}
+
+/* Scrollbar styling (optional, for a more modern look) */
+#queue-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+#queue-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+#queue-container::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 10px;
+}
+
+#queue-container::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
 } 
