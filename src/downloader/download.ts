@@ -37,4 +37,3 @@ export const DEFAULT_FILENAME_TEMPLATE = "{artist} - {title}";
  */
 // eslint-disable-next-line no-control-regex
 export const INVALID_FILENAME_CHARS_REGEX = /[\x00-\x1f\x7f<>:"/\\|?*]/g;
-const MULTIPLE_WHITESPACE_REGEX = /\s+/g;

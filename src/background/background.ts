@@ -1,4 +1,4 @@
-import { SoundCloudApi } from "../api/soundcloudApi";
+import { SoundCloudApi, Track, Playlist } from "../api/soundcloudApi";
 import { LogLevel, Logger } from "../utils/logger";
 import {
   onBeforeSendHeaders,
@@ -14,6 +14,9 @@ import { handleIncomingMessage } from "./messageHandler";
 import { DownloadProgress } from "../types";
 import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientIdRule } from "../utils/browser";
 import { preInitializeFFmpegPool } from "../downloader/ffmpegManager";
+import { downloadTrack } from "../downloader/downloadHandler";
+import { Semaphore } from "./semaphore";
+
 // --- Main TrackError class for background.ts specific errors ---
 export class TrackError extends Error {
   constructor(message: string, trackId?: number) {
@@ -25,8 +28,258 @@ const soundcloudApi = new SoundCloudApi();
 const logger = Logger.create("Background", LogLevel.Debug);
 const manifest = getExtensionManifest();
 
+// --- Download Queue Definition ---
+export interface QueueItem {
+  id: string; // Unique ID for this queue item (can be same as originalDownloadIdFromContentScript initially)
+  type: "DOWNLOAD" | "DOWNLOAD_SET" | "DOWNLOAD_SET_RANGE";
+  url: string;
+  originalMessage: any; // Store the original message from content script for processing
+  status: "pending" | "processing" | "completed" | "error";
+  progress?: number;
+  error?: string;
+  tabId?: number; // Original tabId that requested it
+  title?: string; // Optional: to be fetched or set later for display
+  addedAt: number; // Timestamp when added to queue
+}
+
+export const downloadQueue: QueueItem[] = [];
+let isProcessingQueue = false; // Simple flag to prevent concurrent processing for now
+
+// Function to broadcast queue changes (simple version)
+export const broadcastQueueUpdate = () => {
+  logger.logDebug("[Queue Broadcast] Sending queue update.");
+  // This sends to all extension contexts (popups, options pages, etc.)
+  // We don't use sendMessageToTab because we don't know the popup's "tabId"
+  // Note: compatibilityStubs doesn't have a generic runtime.sendMessage wrapper yet, so we use chrome directly.
+  // TODO: Add a broadcastMessage wrapper to compatibilityStubs
+  if (chrome?.runtime?.sendMessage) {
+    chrome.runtime.sendMessage({ type: "QUEUE_UPDATED_BROADCAST", queuePayload: downloadQueue }, (response) => {
+      if (chrome.runtime.lastError) {
+        // Expected error if no popups/listeners are open: "The message port closed before a response was received."
+        const msg = chrome.runtime.lastError.message?.toLowerCase() || "";
+        if (!msg.includes("message port closed") && !msg.includes("receiving end does not exist")) {
+          logger.logWarn("[Queue Broadcast] Error sending queue update:", chrome.runtime.lastError.message);
+        }
+      }
+      // Handle response if needed, often not needed for broadcasts
+    });
+  } else {
+    logger.logWarn("[Queue Broadcast] chrome.runtime.sendMessage not available?");
+  }
+};
+
+// Function to actually execute a download task from the queue
+const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
+  logger.logInfo(`[QueueProcessor _executeDownloadTask] Starting task for ID: ${item.id}, Type: ${item.type}, URL: ${item.url}`);
+  item.status = "processing";
+  broadcastQueueUpdate(); // Broadcast status change
+  if (item.tabId) {
+    sendDownloadProgress(item.tabId, item.id, 0, undefined, "Resuming");
+  }
+
+  const reportProgressForQueueItem = (progress?: number, browserDownloadId?: number) => {
+    if (progress !== undefined) {
+      item.progress = progress;
+      if (item.tabId) {
+        sendDownloadProgress(item.tabId, item.id, progress, undefined, browserDownloadId ? undefined : "Resuming", browserDownloadId);
+      }
+      // Broadcast frequent progress updates (maybe throttle this later)
+      broadcastQueueUpdate();
+    }
+  };
+
+  try {
+    if (item.type === "DOWNLOAD") {
+      const trackUrl = item.originalMessage.url;
+      if (!trackUrl) {
+        throw new Error("Missing URL in original message for DOWNLOAD item");
+      }
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] Resolving track URL: ${trackUrl} for item ${item.id}`);
+      // --- Restore actual download logic --- 
+      const track = await soundcloudApi.resolveUrl<Track>(trackUrl);
+      if (!track || track.kind !== "track") {
+        throw new Error(`Failed to resolve URL to a valid track: ${trackUrl}`);
+      }
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] Track resolved: ${track.title}. Starting download for item ${item.id}`);
+      await downloadTrack(track, undefined, undefined, undefined, reportProgressForQueueItem);
+      item.status = "completed";
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] DOWNLOAD complete for item ${item.id}: ${track.title}`);
+      // --- Simulation code removed --- 
+
+    } else if (item.type === "DOWNLOAD_SET") {
+      const setUrl = item.originalMessage.url;
+      if (!setUrl) {
+        throw new Error("Missing URL in original message for DOWNLOAD_SET item");
+      }
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] Resolving set URL: ${setUrl} for item ${item.id}`);
+      const set = await soundcloudApi.resolveUrl<Playlist>(setUrl);
+      if (!set || !set.tracks || set.tracks.length === 0) {
+        throw new Error(`Failed to resolve URL to a valid playlist or playlist is empty: ${setUrl}`);
+      }
+
+      // --- Fetch Full Track Details --- 
+      const trackIds = set.tracks.map((t) => t.id);
+      if (trackIds.length === 0) {
+        logger.logWarn(`[Queue Set ${item.id}] Playlist resolved but contains no track IDs?`);
+        item.status = "completed"; // Mark as completed if no tracks
+        return; // Nothing to download
+      }
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] Set resolved: ${set.title}. Fetching full details for ${trackIds.length} tracks for item ${item.id}`);
+      // Fetch tracks in batches if necessary (SoundCloud API might have limits)
+      // Let's use a reasonable chunk size, e.g., 50 (adjust if needed)
+      const trackIdChunkSize = 50;
+      const trackIdChunks = chunkArray(trackIds, trackIdChunkSize);
+      const allFullTracks: Track[] = [];
+      for (const chunk of trackIdChunks) {
+        const keyedTracks = await soundcloudApi.getTracks(chunk);
+        allFullTracks.push(...Object.values(keyedTracks));
+      }
+      logger.logInfo(`[QueueProcessor _executeDownloadTask] Fetched full details for ${allFullTracks.length} tracks.`);
+      // --- End Fetch Full Track Details --- 
+
+      const progresses: { [trackId: number]: number } = {};
+      let encounteredError = false;
+      let lastError: Error | string | null = null;
+
+      const calculateSetProgress = () => {
+        const totalProgressSum = Object.values(progresses).reduce((acc, cur) => acc + cur, 0);
+        // Use allFullTracks.length as the denominator now
+        return allFullTracks.length > 0 ? totalProgressSum / allFullTracks.length : 0;
+      };
+
+      item.progress = 0;
+      reportProgressForQueueItem(0);
+
+      const setAlbumName = set.set_type === "album" || set.set_type === "ep" ? set.title : undefined;
+      const setPlaylistName = set.set_type !== "album" && set.set_type !== "ep" ? set.title : undefined;
+
+      const downloadPromises: Promise<any>[] = [];
+
+      // Iterate over the fetched full track details
+      for (let i = 0; i < allFullTracks.length; i++) {
+        const track = allFullTracks[i]; // Use the full track object
+        const trackNumber = i + 1;
+
+        const reportTrackInSetProgress = (progress?: number, browserDownloadId?: number) => {
+          if (progress !== undefined) {
+            progresses[track.id] = progress;
+            const overallProgress = calculateSetProgress();
+            reportProgressForQueueItem(overallProgress, browserDownloadId);
+          }
+          // Don't broadcast on every single sub-track progress, only on overall update via reportProgressForQueueItem
+        };
+
+        downloadPromises.push(
+          downloadTrackSemaphore.withLock(() => {
+            logger.logDebug(`[Queue Set ${item.id}] Starting download for track ${trackNumber}/${allFullTracks.length}: ${track.title} (ID: ${track.id})`);
+            // Pass the full track object
+            return downloadTrack(track, trackNumber, setAlbumName, setPlaylistName, reportTrackInSetProgress);
+          }).catch((error) => {
+            logger.logWarn(`[Queue Set ${item.id}] Failed to download track ${trackNumber}: ${track.title}`, error);
+            encounteredError = true;
+            lastError = error?.message || String(error);
+            progresses[track.id] = 100; // Mark failed track as 'complete' for avg calculation purposes
+            const overallProgress = calculateSetProgress(); // Recalculate overall progress
+            reportProgressForQueueItem(overallProgress);
+            // Don't rethrow, let Promise.all complete
+          })
+        );
+      }
+
+      logger.logInfo(`[Queue Set ${item.id}] Waiting for ${downloadPromises.length} track downloads to complete...`);
+      await Promise.all(downloadPromises);
+      logger.logInfo(`[Queue Set ${item.id}] All track download attempts finished.`);
+
+      if (encounteredError) {
+        item.status = "error";
+        item.error = "One or more tracks failed to download within the set.";
+        logger.logWarn(`[Queue Set ${item.id}] DOWNLOAD_SET completed with errors. Last individual error logged was: ${lastError || "None recorded"}`);
+        if (item.tabId) sendDownloadProgress(item.tabId, item.id, 102, item.error);
+      } else {
+        item.status = "completed";
+        item.progress = 101; // Explicitly set 101
+        logger.logInfo(`[Queue Set ${item.id}] DOWNLOAD_SET completed successfully.`);
+        if (item.tabId) sendDownloadProgress(item.tabId, item.id, 101);
+      }
+
+    } else if (item.type === "DOWNLOAD_SET_RANGE") {
+      logger.logWarn(`[QueueProcessor _executeDownloadTask] DOWNLOAD_SET_RANGE for ${item.id} not yet implemented in queue processor.`);
+      item.status = "error";
+      item.error = "Set range downloads via queue not yet implemented.";
+      if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error);
+    } else {
+      logger.logError(`[QueueProcessor _executeDownloadTask] Unknown item type: ${item.type} for item ID: ${item.id}`);
+      item.status = "error";
+      item.error = "Unknown download type";
+      if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error);
+    }
+  } catch (err: any) {
+    logger.logError(`[QueueProcessor _executeDownloadTask] Error processing item ${item.id}:`, err);
+    item.status = "error";
+    item.error = err.message || "Unknown error during processing";
+    if (item.tabId) sendDownloadProgress(item.tabId, item.id, undefined, item.error, undefined);
+  } finally {
+    // Broadcast final status change regardless of success/error
+    broadcastQueueUpdate();
+  }
+};
+
+const processQueue = async () => {
+  if (isProcessingQueue) {
+    return;
+  }
+  isProcessingQueue = true;
+
+  // Find the first pending item
+  const itemIndex = downloadQueue.findIndex(item => item.status === "pending");
+
+  if (itemIndex !== -1) {
+    const itemToProcess = downloadQueue[itemIndex];
+    await _executeDownloadTask(itemToProcess);
+
+    // After task execution (success or error), remove the item if it's finalized
+    // We check the index again in case the queue was modified concurrently (though it shouldn't be with isProcessingQueue flag)
+    const finalIndex = downloadQueue.findIndex(item => item.id === itemToProcess.id);
+    if (finalIndex !== -1 && (downloadQueue[finalIndex].status === "completed" || downloadQueue[finalIndex].status === "error")) {
+      logger.logInfo(`[QueueProcessor] Removing finalized item ${downloadQueue[finalIndex].id} (Status: ${downloadQueue[finalIndex].status}) from queue.`);
+      downloadQueue.splice(finalIndex, 1);
+      broadcastQueueUpdate(); // Broadcast removal
+    }
+  } else {
+    // No pending items found
+  }
+
+  isProcessingQueue = false;
+
+  // Check if there are still pending items to process immediately
+  if (downloadQueue.some(item => item.status === "pending")) {
+    triggerProcessQueue();
+  }
+};
+
+export const triggerProcessQueue = () => {
+  setTimeout(() => {
+    logger.logInfo("[QueueProcessor trigger] Checking queue...");
+    processQueue();
+  }, 0);
+};
+// --- End Download Queue Definition ---
+
+// --- Global Initializations ---
 const RULE_ID_OAUTH = 1;
 const RULE_ID_CLIENT_ID = 2;
+
+const getMaxConcurrent = () => Math.max(1, Math.min(Number(getConfigValue("maxConcurrentTrackDownloads")) || 3, 10));
+let downloadTrackSemaphore = new Semaphore(getMaxConcurrent());
+logger.logInfo(`Download track semaphore initialized with concurrency: ${getMaxConcurrent()}`);
+
+registerConfigChangeHandler("maxConcurrentTrackDownloads", (newValue) => {
+  const newConcurrency = Math.max(1, Math.min(Number(newValue) || 3, 10));
+  logger.logInfo(`Updating download track semaphore concurrency to: ${newConcurrency}`);
+  downloadTrackSemaphore = new Semaphore(newConcurrency);
+});
+
+// --- End Global Initializations ---
 
 /**
  * Updates the declarativeNetRequest rule for adding the OAuth token header.
@@ -255,9 +508,9 @@ onBeforeRequest(
   ["blocking"]
 );
 
-onPageActionClicked(() => {
-  openOptionsPage();
-});
+// onPageActionClicked(() => {
+// openOptionsPage();
+// });
 
 const oauthTokenChanged = async (token: string | null | undefined) => {
   if (!token) {

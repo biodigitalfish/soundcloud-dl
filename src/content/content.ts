@@ -164,7 +164,7 @@ function hideModal() {
 interface DownloadButton {
   elem: HTMLButtonElement;
   onClick: any;
-  state: "Idle" | "Preparing" | "Downloading" | "Pausing" | "Paused" | "Resuming" | "Finishing" | "Downloaded" | "Error";
+  state: "Idle" | "Preparing" | "Downloading" | "Pausing" | "Paused" | "Resuming" | "Finishing" | "Downloaded" | "Error" | "Queued";
   resetTimer?: number;
   originalUrl?: string; // Store the URL for resuming/pausing
   lastProgressTime?: number; // Add timestamp for progress tracking
@@ -403,28 +403,18 @@ const handleMessageFromBackgroundScript = (messagePayload: any, sender: any): Pr
     return Promise.resolve({ handled: true, id: finalDownloadId, reason: "Redundant simple ack, state not Preparing" });
   }
 
-  if (messagePayload.success === true && originalIdFromPayload === finalDownloadId) {
-    logger.logDebug(`[CS_DEBUG_ACK_INITIAL_MATCH] Early ack initial match for ${finalDownloadId}. Current button state: ${currentState}. Full Message:`, JSON.parse(JSON.stringify(messagePayload)));
-    if (currentState === "Preparing") {
-      logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] currentState is Preparing.");
-      if (progress === undefined) {
-        logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.progress is undefined.");
-        if (status === undefined) {
-          logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.status is undefined.");
-          if (completed === undefined) {
-            logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] message.completed is undefined.");
-            if (!error) {
-              logger.logDebug("[CS_DEBUG_ACK_CONDITIONS] !message.error is true. ALL PRE-CONDITIONS FOR STATE TRANSITION MET.");
-            } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] !message.error FAILED. Error: ${error}`); }
-          } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.completed FAILED. Was: ${completed}`); }
-        } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.status FAILED. Was: ${status}`); }
-      } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] message.progress FAILED. Was: ${progress}`); }
-    } else { logger.logWarn(`[CS_DEBUG_ACK_FAIL_FINAL_BLOCK] currentState was NOT Preparing. Was: ${currentState}`); }
-  }
-
   // Adjusted condition: Accept if (success===true AND no error) OR (error==="" AND success is undefined/not explicitly false)
-  if (((messagePayload.success === true && !error) || (messagePayload.error === "" && messagePayload.success === undefined)) && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === undefined && status === undefined && completed === undefined) {
-    logger.logDebug(`[HANDLE_MSG_FROM_BG] Initial command success for ${finalDownloadId}. Transitioning to Downloading state.`);
+  // AND also check for our new specific queue message.
+  const isQueueAck = messagePayload.success === true && typeof messagePayload.message === "string" && messagePayload.message.includes("added to queue");
+
+  if (isQueueAck && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === undefined && status === undefined && completed === undefined) {
+    logger.logDebug(`[HANDLE_MSG_FROM_BG] 'Added to Queue' ack for ${finalDownloadId}. Updating button text.`);
+    setButtonText(downloadButton, "Queued (0%)"); // New text for queued state
+    downloadButton.style.cursor = "default";
+    downloadButtons[finalDownloadId!].state = "Queued"; // New distinct state for the button data
+    downloadButtons[finalDownloadId!].lastProgressTime = Date.now();
+  } else if (((messagePayload.success === true && !error) || (messagePayload.error === "" && messagePayload.success === undefined)) && originalIdFromPayload === finalDownloadId && currentState === "Preparing" && progress === undefined && status === undefined && completed === undefined) {
+    logger.logDebug(`[HANDLE_MSG_FROM_BG] Initial command success (non-queue ack) for ${finalDownloadId}. Transitioning to Downloading state.`);
     setButtonText(downloadButton, "Downloading... (Click to Pause)");
     downloadButton.style.background = "linear-gradient(90deg, #ff5419 0%, transparent 0%)";
     downloadButton.style.cursor = "pointer";
@@ -1312,8 +1302,8 @@ const createPauseResumeHandler = (downloadId: string): (() => Promise<void>) => 
       setButtonText(buttonData.elem, "Pausing...");
       buttonData.elem.style.cursor = "default"; // Indicate non-interactive while command is processed
       buttonData.elem.onclick = null; // Prevent rapid re-clicks
-      buttonData.state = "Pausing";
-      buttonData.lastProgressTime = Date.now(); // Update time to reflect this action
+      buttonData.state = "Pausing"; // Corrected: assign to buttonData.state
+      buttonData.lastProgressTime = Date.now(); // Corrected: assign to buttonData.lastProgressTime
 
       await loggedSendMessageToBackend({ type: "PAUSE_DOWNLOAD", downloadId }, "createPauseResumeHandler-Pause");
     } else if (currentButtonState === "Paused") {
@@ -1322,8 +1312,8 @@ const createPauseResumeHandler = (downloadId: string): (() => Promise<void>) => 
       setButtonText(buttonData.elem, "Resuming...");
       buttonData.elem.style.cursor = "default"; // Indicate non-interactive
       buttonData.elem.onclick = null; // Prevent rapid re-clicks
-      buttonData.state = "Resuming";
-      buttonData.lastProgressTime = Date.now(); // Update time
+      buttonData.state = "Resuming"; // Corrected: assign to buttonData.state
+      buttonData.lastProgressTime = Date.now(); // Corrected: assign to buttonData.lastProgressTime
 
       await loggedSendMessageToBackend({ type: "RESUME_DOWNLOAD", downloadId }, "createPauseResumeHandler-Resume");
     } else {

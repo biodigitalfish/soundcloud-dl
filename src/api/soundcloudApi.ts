@@ -64,6 +64,17 @@ interface OriginalDownload {
 type KeyedTracks = { [key: number]: Track };
 type ProgressReport = (progress: number) => void;
 
+export interface Playlist {
+  id: number;
+  kind: string; // e.g., "playlist", "album"
+  permalink_url: string;
+  title: string;
+  track_count: number;
+  tracks: Track[];
+  user: User;
+  set_type?: string; // e.g., "album", "ep", "playlist"
+}
+
 export class SoundCloudApi {
   readonly baseUrl: string = "https://api-v2.soundcloud.com";
   private logger: Logger;

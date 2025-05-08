@@ -1,0 +1,10 @@
+/* Basic styling for the queue popup */
+body {
+  font-family: sans-serif;
+  min-width: 300px;
+  padding: 10px;
+}
+
+#queue-container {
+  margin-top: 10px;
+} 

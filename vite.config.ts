@@ -32,7 +32,7 @@ export default defineConfig({
                 { src: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm", dest: "ffmpeg-core" },
                 { src: "node_modules/@ffmpeg/ffmpeg/dist/esm/worker.js", dest: "ffmpeg-core" },
                 {
-                    src: `src/manifests/manifest_${browser === "firefox" ? "build" : "chrome"}.json`,
+                    src: `src/manifests/manifest_${browser === "firefox" ? "firefox" : "chrome"}.json`,
                     dest: ".",
                     rename: "manifest.json"
                 },
@@ -40,6 +40,9 @@ export default defineConfig({
                 { src: "src/background/background.html", dest: "." },
                 // Copy settings.html
                 { src: "src/settings/settings.html", dest: "." },
+                // Copy popup files
+                { src: "src/popup/queue.html", dest: "src/popup" }, // Copies to dist/{browser}/src/popup/queue.html
+                { src: "src/popup/queue.css", dest: "src/popup" },  // Copies to dist/{browser}/src/popup/queue.css
                 // Copy content-loader.js and rename it
                 {
                     src: "src/content/content-loader.js",
@@ -79,24 +82,27 @@ export default defineConfig({
                 "js/settings.js": path.resolve(__dirname, "src/settings/settings.ts"),     // Added settings script
                 "js/content.js": path.resolve(__dirname, "src/content/content.ts"),
                 "js/bridge-content-script.js": path.resolve(__dirname, "src/content/bridge-content-script.ts"), // Added bridge script
-                "js/repostBlocker.js": path.resolve(__dirname, "src/content/repostBlocker.ts")
+                "js/repostBlocker.js": path.resolve(__dirname, "src/content/repostBlocker.ts"),
+                "src/popup/queue.js": path.resolve(__dirname, "src/popup/queue.ts") // Added popup script
             },
             output: {
                 format: "esm",
                 entryFileNames: (chunkInfo) => {
                     // Handles input keys like "js/background.js" -> "js/background-scdl.js"
-                    if (chunkInfo.name.startsWith("js/") && chunkInfo.name.endsWith(".js")) {
-                        const baseName = chunkInfo.name.slice(3, -3); // Removes "js/" and ".js"
-                        return `js/${baseName}${fileNameSuffix}.js`;
+                    // Handles input keys like "src/popup/queue.js" -> "src/popup/queue-scdl.js"
+                    if ((chunkInfo.name.startsWith("js/") || chunkInfo.name.startsWith("src/popup/")) && chunkInfo.name.endsWith(".js")) {
+                        const prefix = chunkInfo.name.startsWith("js/") ? "js/" : "src/popup/";
+                        const baseName = chunkInfo.name.slice(prefix.length, -3); // Removes prefix and ".js"
+                        return `${prefix}${baseName}${fileNameSuffix}.js`;
                     }
                     // Handles input keys like "js/repostBlocker" (if it were without .js in map) or other js files
                     if (chunkInfo.name.startsWith("js/")) {
                         const baseName = chunkInfo.name.slice(3).replace(/\.js$/, ""); // Removes "js/" and optional ".js"
                         return `js/${baseName}${fileNameSuffix}.js`;
                     }
-                    // Fallback for entries not starting with "js/", if any
+                    // Fallback for entries not starting with "js/" or "src/popup/", if any
                     const nameWithoutExtension = chunkInfo.name.replace(/\.[^/.]+$/, "");
-                    return `js/${nameWithoutExtension}${fileNameSuffix}.js`;
+                    return `js/${nameWithoutExtension}${fileNameSuffix}.js`; // Default to js/ prefix if not matched
                 },
                 chunkFileNames: `js/[name]${fileNameSuffix}-[hash].js`,
                 assetFileNames: `assets/[name]${fileNameSuffix}-[hash].[ext]`

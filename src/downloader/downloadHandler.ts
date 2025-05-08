@@ -514,6 +514,13 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     }
                     if (data.trackNumber) writer.setTrackNumber(data.trackNumber);
 
+                    // Add SoundCloud Track ID to metadata
+                    if (data.trackId) {
+                        writer.setSoundCloudTrackId(data.trackId.toString());
+                    } else {
+                        logger.logWarn(`[Metadata] TrackId is missing in data, cannot set SoundCloudTrackID for tagging. Track Title: ${data.title}`);
+                    }
+
                     if (artworkUrl) {
                         try {
                             const actualArtworkUrl = artworkUrl.replace("-large.jpg", "-t500x500.jpg");

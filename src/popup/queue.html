@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Download Queue</title>
+    <link rel="stylesheet" href="queue.css">
+</head>
+
+<body>
+    <h1>Download Queue</h1>
+    <div id="queue-container">
+        <p>Queue will be displayed here.</p>
+    </div>
+
+    <hr>
+    <h2>Restore Download History</h2>
+    <div id="restore-history-container">
+        <p>Select a directory containing your downloaded SoundCloud tracks to rebuild history.</p>
+        <input type="file" id="directory-upload" webkitdirectory directory multiple />
+        <button id="process-directory-button">Process Directory</button>
+        <div id="restore-status"></div>
+    </div>
+
+    <script type="module" src="queue-scdl.js"></script>
+</body>
+
+</html>

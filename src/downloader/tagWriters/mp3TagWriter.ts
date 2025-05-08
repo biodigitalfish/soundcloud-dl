@@ -65,6 +65,17 @@ export class Mp3TagWriter implements TagWriter {
     });
   }
 
+  setSoundCloudTrackId(trackId: string): void {
+    if (!trackId) throw new Error("Invalid value for SoundCloud Track ID");
+    // Using TXXX frame for user-defined text information
+    // Description: A unique identifier for the source of this custom ID
+    // Text: The actual track ID
+    this.writer.setFrame("TXXX" as any, {
+      description: "SoundCloudTrackID",
+      text: trackId,
+    });
+  }
+
   getBuffer(): Promise<TagWriterOutput> {
     this.writer.addTag();
 

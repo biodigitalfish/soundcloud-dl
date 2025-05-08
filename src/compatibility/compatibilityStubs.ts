@@ -311,18 +311,39 @@ export const sendMessageToBackend = (message: any): Promise<any> => {
 
 export const sendMessageToTab = (tabId: number, message: any): Promise<any> => {
   if (typeof browser !== "undefined" && browser.tabs && browser.tabs.sendMessage) {
-    return browser.tabs.sendMessage(tabId, message);
+    return browser.tabs.sendMessage(tabId, message)
+      .catch(error => {
+        // For Firefox, check the error message directly
+        const errorMessage = error && error.message ? error.message.toLowerCase() : "";
+        if (errorMessage.includes("receiving end does not exist") || errorMessage.includes("could not establish connection")) {
+          logger.logDebug(`[CompatibilityStubs sendMessageToTab FF] Tab ${tabId} not available or content script not ready. Message:`, message);
+          return Promise.resolve({ ScdlCompatStubTabUnavailable: true, tabId, browser: "firefox" }); // Resolve instead of reject
+        }
+        logger.logWarn(`[CompatibilityStubs sendMessageToTab FF] Error sending message to tab ${tabId}:`, error, "Original message:", message);
+        return Promise.reject(error); // Re-reject for other errors
+      });
   } else if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.sendMessage) {
     return new Promise((resolve, reject) => {
       chrome.tabs.sendMessage(tabId, message, (response) => {
         if (chrome.runtime.lastError) {
-          return reject(chrome.runtime.lastError);
+          const errorMessage = chrome.runtime.lastError.message ? chrome.runtime.lastError.message.toLowerCase() : "";
+          if (errorMessage.includes("receiving end does not exist") || errorMessage.includes("could not establish connection")) {
+            logger.logDebug(`[CompatibilityStubs sendMessageToTab Chrome] Tab ${tabId} not available or content script not ready (lastError: ${chrome.runtime.lastError.message}). Message:`, message);
+            // Resolve with a special object or undefined to indicate non-critical failure
+            resolve({ ScdlCompatStubTabUnavailable: true, tabId, browser: "chrome" });
+          } else {
+            // For other errors, reject as before
+            logger.logWarn(`[CompatibilityStubs sendMessageToTab Chrome] chrome.runtime.lastError sending to tab ${tabId}:`, chrome.runtime.lastError, "Original message:", message);
+            reject(chrome.runtime.lastError);
+          }
+        } else {
+          resolve(response);
         }
-        resolve(response);
       });
     });
   } else {
-    return Promise.reject("Browser does not support tabs.sendMessage");
+    logger.logError("[CompatibilityStubs sendMessageToTab] Browser does not support tabs.sendMessage");
+    return Promise.reject(new Error("Browser does not support tabs.sendMessage"));
   }
 };
 

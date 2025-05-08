@@ -657,6 +657,20 @@ export class Mp4TagWriter implements TagWriter {
     }
   }
 
+  setSoundCloudTrackId(trackId: string): void {
+    if (!this._hasValidMp4) {
+      Mp4TagWriter._logError("Cannot set SoundCloud Track ID - MP4 structure is invalid or not parsed.");
+      return;
+    }
+    if (!trackId) {
+      Mp4TagWriter._logError("Invalid value for SoundCloud Track ID");
+      return;
+    }
+    // Using a custom atom name "scid" for SoundCloud Track ID.
+    // The addMetadataAtom method in the Mp4 class expects a 1-4 character name.
+    this._mp4.addMetadataAtom("scid", trackId);
+  }
+
   setDuration(duration: number): void {
     try {
       if (duration < 1) throw new Error("Invalid value for duration");

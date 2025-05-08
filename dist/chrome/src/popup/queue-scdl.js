@@ -1,0 +1,9 @@
+import{o as u,l as s}from"../../js/compatibilityStubs-scdl-D9J5LMR3.js";import"../../js/logger-scdl-B3xayXxI.js";const o=console,t=document.getElementById("queue-container");function n(r){if(!t)return;if(r.length===0){t.innerHTML="<p>The download queue is currently empty.</p>";return}let a="<ul>";r.forEach(e=>{a+=`<li>
+            <strong>ID:</strong> ${e.id}<br>
+            <strong>Type:</strong> ${e.type}<br>
+            <strong>URL:</strong> ${e.url?.substring(0,50)}...<br>
+            <strong>Status:</strong> ${e.status}<br>
+            ${e.progress!==void 0?`<strong>Progress:</strong> ${e.progress.toFixed(1)}%<br>`:""}
+            ${e.error?`<strong>Error:</strong> ${e.error}<br>`:""}
+            <strong>Added:</strong> ${new Date(e.addedAt).toLocaleTimeString()}
+        </li>`}),a+="</ul>",t.innerHTML=a}async function d(){o.log("[Popup] Requesting queue data from background...");try{const r=await s({type:"GET_QUEUE_DATA"});o.log("[Popup] Received raw data from sendMessageToBackend:",JSON.stringify(r,null,2)),Array.isArray(r)?(o.log("[Popup] Received queue data (is array):",r),n(r)):(o.error("[Popup] Received invalid queue data (not array) from background:",r),t&&(t.innerHTML="<p>Error: Could not load queue data (format error).</p>"))}catch(r){o.error("[Popup] Error requesting queue data:",r),t&&(t.innerHTML="<p>Error: Failed to connect to background script.</p>")}}u(async(r,a)=>(r&&r.type==="QUEUE_UPDATED_BROADCAST"&&Array.isArray(r.queuePayload)?(o.log("[Popup] Received QUEUE_UPDATED_BROADCAST from background:",r.queuePayload),n(r.queuePayload)):r&&Array.isArray(r)&&(o.log("[Popup] Received a direct array message (assumed queue update):",r),n(r)),!1)),document.addEventListener("DOMContentLoaded",()=>{o.log("Queue popup DOM loaded. Fetching initial queue."),d()}),o.log("Queue popup script loaded.");

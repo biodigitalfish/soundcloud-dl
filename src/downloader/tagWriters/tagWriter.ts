@@ -13,5 +13,6 @@ export interface TagWriter {
   setYear(year: number): void;
   setGrouping(grouping: string): void;
   setArtwork(artworkBuffer: ArrayBuffer): void;
+  setSoundCloudTrackId(trackId: string): void;
   getBuffer(): Promise<TagWriterOutput>;
 }
