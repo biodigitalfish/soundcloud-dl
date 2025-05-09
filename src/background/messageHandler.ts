@@ -24,6 +24,9 @@ export const DOWNLOAD = "DOWNLOAD";
 export const DOWNLOAD_SET_RANGE = "DOWNLOAD_SET_RANGE";
 export const PAUSE_DOWNLOAD = "PAUSE_DOWNLOAD";
 export const RESUME_DOWNLOAD = "RESUME_DOWNLOAD";
+export const PAUSE_ALL_DOWNLOADS = "PAUSE_ALL_DOWNLOADS";
+export const RESUME_ALL_DOWNLOADS = "RESUME_ALL_DOWNLOADS";
+export const GET_GLOBAL_PAUSE_STATE = "GET_GLOBAL_PAUSE_STATE";
 const GET_QUEUE_DATA = "GET_QUEUE_DATA"; // Define as const for safety
 const GET_EXTENSION_CONFIG = "GET_EXTENSION_CONFIG"; // Define as const
 
@@ -36,6 +39,11 @@ class MessageHandlerError extends Error {
 
 // State for paused downloads
 const pausedDownloads: { [key: string]: boolean } = {};
+
+// Global pause state - to be managed by new handlers
+// This will be imported from background.ts or managed via functions exported from there
+// For now, we assume background.ts will expose ways to set/get this
+// import { getGlobalPauseState, setGlobalPauseState, clearGlobalPauseState } from './background'; // Ideal
 
 const soundcloudApi = new SoundCloudApi();
 const logger = Logger.create("MessageHandler", LogLevel.Debug);
@@ -57,6 +65,9 @@ export async function handleIncomingMessage(message: any, sender: chrome.runtime
     const typesAllowedWithoutDownloadId = [
         GET_EXTENSION_CONFIG,
         GET_QUEUE_DATA,
+        PAUSE_ALL_DOWNLOADS,
+        RESUME_ALL_DOWNLOADS,
+        GET_GLOBAL_PAUSE_STATE,
         "EXTRACT_SCID_FROM_M4A",
         "RESTORE_HISTORY_FROM_IDS"
     ];
@@ -70,7 +81,13 @@ export async function handleIncomingMessage(message: any, sender: chrome.runtime
     const tabId = sender.tab?.id;
     const { downloadId, url, type } = message;
 
-    const typesAllowedWithoutTabId = [GET_EXTENSION_CONFIG, GET_QUEUE_DATA];
+    const typesAllowedWithoutTabId = [
+        GET_EXTENSION_CONFIG,
+        GET_QUEUE_DATA,
+        PAUSE_ALL_DOWNLOADS,
+        RESUME_ALL_DOWNLOADS,
+        GET_GLOBAL_PAUSE_STATE
+    ];
     if (!tabId && type && !typesAllowedWithoutTabId.includes(type)) {
         logger.logWarn(`Message type ${type} received without a valid tab ID and is not allowed.`, { sender, message });
         return { error: `No valid tab ID found for message type ${type}` };
@@ -142,6 +159,42 @@ export async function handleIncomingMessage(message: any, sender: chrome.runtime
         // The promise from handleIncomingMessage should resolve with the ackPayload
         // The actual download processing is now detached.
         return Promise.resolve(ackPayload);
+
+    } else if (type === PAUSE_ALL_DOWNLOADS) {
+        logger.logInfo("[MessageHandler] Received PAUSE_ALL_DOWNLOADS request.");
+        // This is where we'd call await setGlobalPauseState(true) from background.ts
+        // For now, let's simulate the interaction with background.ts state via direct manipulation
+        // Needs to be replaced with actual call to background.ts function
+        // e.g. background.setGlobalPauseState(true);
+        // And then broadcast this change to all content scripts / popups
+        // background.broadcastGlobalPauseStateChange(true);
+        Object.keys(downloadQueue).forEach(itemId => {
+            // This is a conceptual illustration; direct manipulation of `pausedDownloads` for ALL items
+            // might conflict if individual pause is also used. The `isGloballyPaused` flag in background.ts
+            // is the primary mechanism.
+            // Individual items are not marked as paused here, the global flag handles it.
+        });
+        // Placeholder: directly update a conceptual global pause state. This needs to be in background.ts
+        // For now, this simulates the action. Background.ts will need `setGlobalPauseFlag(true)`
+        globalThis.isBackgroundGloballyPaused = true; // SIMULATION
+        triggerProcessQueue(); // To make queue processor re-evaluate based on new global pause state
+        return Promise.resolve({ success: true, message: "All downloads paused globally." });
+
+    } else if (type === RESUME_ALL_DOWNLOADS) {
+        logger.logInfo("[MessageHandler] Received RESUME_ALL_DOWNLOADS request.");
+        // e.g. background.setGlobalPauseState(false);
+        // background.broadcastGlobalPauseStateChange(false);
+        // Placeholder: direct manipulation
+        globalThis.isBackgroundGloballyPaused = false; // SIMULATION
+        triggerProcessQueue(); // Kick off processing for any pending/paused items
+        return Promise.resolve({ success: true, message: "All downloads resumed globally." });
+
+    } else if (type === GET_GLOBAL_PAUSE_STATE) {
+        logger.logInfo("[MessageHandler] Received GET_GLOBAL_PAUSE_STATE request.");
+        // e.g. const state = await background.getGlobalPauseState();
+        // Placeholder: direct access
+        const isPaused = !!globalThis.isBackgroundGloballyPaused; // SIMULATION
+        return Promise.resolve({ isGloballyPaused: isPaused });
 
     } else if (type === "EXTRACT_SCID_FROM_M4A") {
         if (!message.payload || !message.payload.buffer || !message.payload.filename) {

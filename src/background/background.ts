@@ -29,6 +29,22 @@ const soundcloudApi = new SoundCloudApi();
 const logger = Logger.create("Background", LogLevel.Debug);
 const manifest = getExtensionManifest();
 
+// --- Global Pause State --- ADDED
+let isGloballyPaused: boolean = false;
+
+export const setGlobalPauseState = (shouldPause: boolean) => {
+  isGloballyPaused = shouldPause;
+  logger.logInfo(`[Background] Global pause state set to: ${isGloballyPaused}`);
+  // Potentially broadcast this change if UI elements in other parts of the extension need to react
+  // broadcastGlobalPauseStateChange(isGloballyPaused); // Example call
+  if (!isGloballyPaused) {
+    triggerProcessQueue(); // If resuming globally, trigger queue processing
+  }
+};
+
+export const getGlobalPauseState = () => isGloballyPaused;
+// --- End Global Pause State ---
+
 // --- Download Queue Definition ---
 export interface QueueItem {
   id: string; // Unique ID for this queue item (can be same as originalDownloadIdFromContentScript initially)
@@ -332,6 +348,14 @@ const processQueue = async () => {
     return;
   }
   isProcessingQueue = true;
+
+  // --- ADDED: Check global pause state before processing --- 
+  if (getGlobalPauseState()) {
+    logger.logInfo("[QueueProcessor] Global pause is active. Queue processing deferred.");
+    isProcessingQueue = false;
+    return; // Do not process if globally paused
+  }
+  // --- END ADDED --- 
 
   // Find the first pending item
   const itemIndex = downloadQueue.findIndex(item => item.status === "pending");

@@ -938,8 +938,23 @@ const removeDownloadButtons = () => {
 };
 
 const addDownloadButtonToTrackPage = () => {
+  const currentPath = window.location.pathname;
+  const pathSegments = currentPath.split("/").filter(s => s.length > 0);
+
+  // A track page should not be a search page, a sets page, or an albums page.
+  // It typically has two main segments: /username/track-slug.
+  const isLikelyTrackPage = !currentPath.startsWith("/search/") &&
+                           !currentPath.includes("/sets/") &&
+                           !currentPath.includes("/albums/") &&
+                           pathSegments.length === 2;
+
+  if (!isLikelyTrackPage) {
+    logger.logDebug("[TrackPage] Path '" + currentPath + "' does not appear to be an individual track page. Skipping button addition for this handler.");
+    return;
+  }
+
   const selector = ".sc-button-group-medium > .sc-button-like";
-  logger.logDebug("[TrackPage] Querying for selector: " + selector);
+  logger.logDebug("[TrackPage] Querying for selector: " + selector + " on likely track page: " + currentPath);
 
   const addDownloadButtonToPossiblePlaylist = (node: Element) => {
     logger.logDebug("[TrackPage] Found node matching selector:", node);
@@ -1058,12 +1073,13 @@ const handlePageLoaded = async () => {
     addDownloadButtonToTrackPage(); // This also adds an observer event
     addDownloadButtonToFeed();    // This also adds an observer event
     addDownloadButtonToPlaylistPage();
+    addDownloadButtonsToSearchPagePlaylists(); // Add new handler for playlists on search pages
 
     observer.start(document.body);
     logger.logInfo("[handlePageLoaded] DomObserver started/restarted for path: " + window.location.pathname);
     pageInitializationScheduled = false;
     hasInitializedOnce = true; // Mark that at least one initialization has completed
-  }, 50); // Small debounce delay
+  }, 250); // Small debounce delay - Increased from 50ms
 };
 
 const initPageAndPolling = () => {
@@ -1107,9 +1123,16 @@ document.addEventListener("DOMContentLoaded", () => {
 const addDownloadButtonToPlaylistPage = () => {
   logger.logInfo("[PlaylistPage] Running playlist button initialization V2 (Unified Logic)");
 
-  const isAnyPlaylistPage = window.location.pathname.includes("/sets/") ||
-                            window.location.pathname.includes("/albums/") ||
-                            window.location.pathname.includes("/discover/sets/your-moods:") ||
+  const currentPath = window.location.pathname;
+  // Ensure this function does not run on general search pages
+  if (currentPath.startsWith("/search/")) {
+    logger.logDebug("[PlaylistPage] Detected a search page ('" + currentPath + "'), skipping playlist-wide button for this handler.");
+    return;
+  }
+
+  const isAnyPlaylistPage = currentPath.includes("/sets/") ||
+                            currentPath.includes("/albums/") ||
+                            currentPath.includes("/discover/sets/your-moods:") ||
                             document.querySelector(".setTrackList") !== null || // Common for sets
                             document.querySelector(".trackList") !== null ||   // Common for user playlists/likes etc.
                             document.querySelector(".systemPlaylistTrackList__list") !== null || // Added for system playlists like auto-mix
@@ -1245,12 +1268,92 @@ const addDownloadButtonToPlaylistPage = () => {
 
     const downloadUrl = window.location.origin + window.location.pathname;
     const command = createDownloadCommand(downloadUrl);
-    (command as any).isSet = true; // Ensure range option is available for all playlist/set pages
+    // For playlist pages, we always want the range option, so explicitly set isSet.
+    // createDownloadCommand might infer this, but being explicit is safer for this page type.
+    (command as any).isSet = true; 
     logger.logInfo("[PlaylistPage] Adding download buttons to determined final parent:", finalButtonParent);
     addDownloadButtonToParent(finalButtonParent, command, false);
   } else {
     logger.logError("[PlaylistPage] CRITICAL: Could not find or create a suitable parent element for playlist download buttons after all strategies.");
   }
+};
+
+const addDownloadButtonsToSearchPagePlaylists = () => {
+  const currentPath = window.location.pathname;
+  // Only run on playlist search results page, not track search or other search types.
+  if (!currentPath.startsWith("/search/sets")) {
+    return;
+  }
+
+  logger.logDebug("[SearchPagePlaylists] Initializing for playlist search results on path: " + currentPath);
+
+  const processPlaylistResultItem = (playlistItemElement: Element) => {
+    logger.logDebug("[SearchPagePlaylists] Processing playlist item:", playlistItemElement);
+
+    // Find the title link which contains the href for the playlist
+    const titleLink = playlistItemElement.querySelector("a.soundTitle__title") as HTMLAnchorElement;
+    // Determine where to place the button. This selector might need adjustment based on actual DOM.
+    // It should target a container within the playlist item, ideally a button group.
+    // The user's HTML snippet had buttons inside: .soundActions .sc-button-group (within .trackItem__actions)
+    // Let's try to be robust: look for .soundActions first, then .sc-button-group inside it.
+    // Or it could be directly in sound__footer > .soundActions
+    let buttonParentCandidate = playlistItemElement.querySelector(".soundFooter .soundActions .sc-button-group") ||
+                                playlistItemElement.querySelector(".sound__footer .soundActions .sc-button-group") || // From user provided HTML structure (playlist on search page)
+                                playlistItemElement.querySelector(".soundActions .sc-button-group"); // More general
+
+    if (!titleLink || !titleLink.getAttribute("href")) {
+      logger.logWarn("[SearchPagePlaylists] Could not find title link or valid href for item:", playlistItemElement);
+      return;
+    }
+    if (!buttonParentCandidate) {
+      // Fallback: try to find a more generic .soundActions container if specific group not found
+      buttonParentCandidate = playlistItemElement.querySelector(".soundFooter .soundActions") ||
+                              playlistItemElement.querySelector(".sound__footer .soundActions") ||
+                              playlistItemElement.querySelector(".soundActions");
+      if(!buttonParentCandidate) {
+        logger.logWarn("[SearchPagePlaylists] Could not find a suitable button parent (.soundActions or .sc-button-group) for item:", playlistItemElement);
+        return;
+      }
+    }
+    
+    // Ensure we don't add buttons repeatedly if the observer re-triggers or selectors overlap
+    if (buttonParentCandidate.querySelector("button.sc-button-download")) {
+        logger.logDebug("[SearchPagePlaylists] Download button already exists for this item.", playlistItemElement);
+        return;
+    }
+
+    let playlistHref = titleLink.getAttribute("href");
+    if (!playlistHref) { // Should be caught by earlier check, but good for safety
+        logger.logError("[SearchPagePlaylists] Playlist href is null after initial check for item:", playlistItemElement);
+        return;
+    }
+    
+    let playlistUrl = playlistHref;
+    if (!playlistUrl.startsWith("http")) { // Ensure it's a full URL
+        playlistUrl = window.location.origin + playlistUrl;
+    }
+    
+    logger.logInfo(`[SearchPagePlaylists] Adding button for playlist URL: ${playlistUrl}`);
+    const downloadCommand = createDownloadCommand(playlistUrl);
+    // createDownloadCommand should correctly identify it as a set if URL contains /sets/
+    // (command as any).isSet = true; // Explicitly mark as a set if needed, but rely on createDownloadCommand
+
+    addDownloadButtonToParent(buttonParentCandidate as ParentNode, downloadCommand, true); // true for small button (like in feed)
+  };
+
+  // Selector for each playlist item in search results.
+  // Based on user's HTML: <div class="searchItem"><div role="group" class="sound searchItem__trackItem playlist streamContext" ...>
+  // More specific: div.searchItem > div.sound.searchItem__trackItem.playlist
+  const searchResultSelector = "div.searchItem > div.sound.searchItem__trackItem.playlist";
+  document.querySelectorAll(searchResultSelector).forEach(item => processPlaylistResultItem(item));
+
+  observer?.addEvent({
+    selector: searchResultSelector,
+    callback: (element: Element) => processPlaylistResultItem(element),
+    // Optional: add a unique key if managing multiple events for the same selector but different callbacks
+    // key: "searchPagePlaylistItems" 
+  });
+  logger.logDebug("[SearchPagePlaylists] Added observer for selector: " + searchResultSelector);
 };
 
 // Add a periodic check for stuck downloads that runs every 60 seconds
