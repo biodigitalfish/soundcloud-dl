@@ -25,9 +25,19 @@ export function sanitizeFilenameForDownload(input: string) {
   // \p{L}: any kind of letter from any language.
   // \p{N}: any kind of numeric character in any script.
   // \p{Zs}: a whitespace character that is invisible, but does take up space.
-  sanitized = XRegExp.replace(sanitized, XRegExp("[^\\p{L}\\p{N}\\p{Zs}]]", "g"), "");
+  // \p{So}: Other symbols, including most emojis.
+  // MODIFIED: Added \p{So} to the exclusion list to strip more symbols/emojis
+  sanitized = XRegExp.replace(sanitized, XRegExp("[^\\p{L}\\p{N}\\p{Zs}\\p{P}\\p{Sm}]", "gu"), "");
+  // Keeping \p{P} (Punctuation) and \p{Sm} (Symbol, math) for things like hyphens, underscores, plus, equals, etc.
+  // Re-evaluate if \p{P} and \p{Sm} are too broad or too narrow.
+  // Let's try to be more specific: keep letters, numbers, spaces, and a few specific punctuation marks essential for readability.
+  // This will strip emojis and most other symbols.
+  // CORRECTED LINTER ERRORS: Removed unnecessary escapes for - [ ] inside character class
+  // Final attempt at this regex for allowed punctuation.
+  // Removing [ and ] from the keep list to test if they cause the 'raw bracket' error with XRegExp 'u' flag.
+  sanitized = XRegExp.replace(sanitized, XRegExp("[^\\p{L}\\p{N}\\p{Zs}_+.,()-]", "gu"), "");
 
-  return sanitized.replace(/\s{2,}/, " ").trim();
+  return sanitized.replace(/\s{2,}/g, " ").trim(); // Ensure multiple spaces are collapsed to one
 }
 
 export const DEFAULT_FILENAME_TEMPLATE = "{artist} - {title}";

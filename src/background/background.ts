@@ -14,7 +14,8 @@ import { handleIncomingMessage } from "./messageHandler";
 import { DownloadProgress } from "../types";
 import { usesDeclarativeNetRequestForModification, setAuthHeaderRule, setClientIdRule } from "../utils/browser";
 import { preInitializeFFmpegPool } from "../downloader/ffmpegManager";
-import { downloadTrack } from "../downloader/downloadHandler";
+import { downloadTrack, saveTextFileAsDownload } from "../downloader/downloadHandler";
+import { sanitizeFilenameForDownload } from "../downloader/download";
 import { Semaphore } from "./semaphore";
 import { Mp4 } from "../downloader/tagWriters/mp4TagWriter";
 
@@ -203,7 +204,7 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       item.artworkUrl = track.artwork_url; // Ensure artwork is updated
       broadcastQueueUpdate(); // Update with title/artwork before download starts
       logger.logInfo(`[QueueProcessor _executeDownloadTask] Track resolved: ${track.title}. Starting download for item ${item.id}`);
-      await downloadTrack(track, undefined, undefined, undefined, reportProgressForQueueItem);
+      const downloadResult = await downloadTrack(track, undefined, undefined, undefined, reportProgressForQueueItem);
       item.status = "completed";
       await saveQueueState(); // <<< ADDED SAVE (Task completed)
       logger.logInfo(`[QueueProcessor _executeDownloadTask] DOWNLOAD complete for item ${item.id}: ${track.title}`);
@@ -251,71 +252,158 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
       broadcastQueueUpdate(); // Broadcast update with fetched title/artwork now
       // --- End Assign artwork ---
 
-      const progresses: { [trackId: number]: number } = {};
+      let tracksProcessed = 0;
       let encounteredError = false;
-      let lastError: Error | string | null = null;
+      let lastError: string | undefined;
 
-      const calculateSetProgress = () => {
-        const totalProgressSum = Object.values(progresses).reduce((acc, cur) => acc + cur, 0);
-        // Use allFullTracks.length as the denominator now
-        return allFullTracks.length > 0 ? totalProgressSum / allFullTracks.length : 0;
+      const m3uTrackEntries: string[] = []; // INITIALIZE M3U track entries array
+
+      // --- START Re-implemented calculateSetProgress ---
+      const calculateSetProgress = (): number => {
+        if (allFullTracks.length === 0) return 0;
+        // Calculate progress based on tracksProcessed. 
+        // Each fully processed track (progress 101) counts as 1 unit.
+        // Partial progress of the currently processing track isn't easily factored here without more state.
+        // So, this will jump as each track completes.
+        // Alternative: could try to average based on item.progress of sub-tasks if we had that.
+        const overallProgress = (tracksProcessed / allFullTracks.length) * 100;
+        // Cap progress at 100 until the very end (101 signal)
+        return Math.min(overallProgress, 100);
       };
+      // --- END Re-implemented calculateSetProgress ---
 
-      item.progress = 0;
-      reportProgressForQueueItem(0);
+      const downloadConcurrency = getConfigValue("concurrentSetDownloads") as boolean ?? false;
+      const maxConcurrent = downloadConcurrency ? getMaxConcurrent() : 1;
+      const downloadSemaphore = new Semaphore(maxConcurrent);
 
-      const setAlbumName = set.set_type === "album" || set.set_type === "ep" ? set.title : undefined;
-      const setPlaylistName = set.set_type !== "album" && set.set_type !== "ep" ? set.title : undefined;
+      logger.logInfo(`[Queue Set ${item.id}] Processing ${allFullTracks.length} tracks. Concurrency: ${maxConcurrent}`);
 
-      const downloadPromises: Promise<any>[] = [];
-
-      // Iterate over the fetched full track details
-      for (let i = 0; i < allFullTracks.length; i++) {
-        const track = allFullTracks[i]; // Use the full track object
-        const trackNumber = i + 1;
-
-        const reportTrackInSetProgress = (progress?: number, browserDownloadId?: number) => {
-          if (progress !== undefined) {
-            progresses[track.id] = progress;
-            const overallProgress = calculateSetProgress();
-            reportProgressForQueueItem(overallProgress, browserDownloadId);
+      const downloadPromises = allFullTracks.map(async (trackToDownload, index) => {
+        if (getGlobalPauseState()) { // Check global pause before each track
+          logger.logInfo(`[Queue Set ${item.id}] Global pause detected. Skipping download for track: ${trackToDownload.title}`);
+          // How to handle progress here? Maybe mark as skipped or paused.
+          // For now, just don't process. It will remain in pending state within the set processing context.
+          return;
+        }
+        await downloadSemaphore.acquire();
+        try {
+          if (item.status === "error" && getConfigValue("stopSetDownloadOnError")) {
+            logger.logInfo(`[Queue Set ${item.id}] Set download marked as error and stopOnError is true. Skipping remaining tracks.`);
+            return;
           }
-          // Don't broadcast on every single sub-track progress, only on overall update via reportProgressForQueueItem
-        };
 
-        downloadPromises.push(
-          downloadTrackSemaphore.withLock(() => {
-            logger.logDebug(`[Queue Set ${item.id}] Starting download for track ${trackNumber}/${allFullTracks.length}: ${track.title} (ID: ${track.id})`);
-            // Pass the full track object
-            return downloadTrack(track, trackNumber, setAlbumName, setPlaylistName, reportTrackInSetProgress);
-          }).catch((error) => {
-            logger.logWarn(`[Queue Set ${item.id}] Failed to download track ${trackNumber}: ${track.title}`, error);
-            encounteredError = true;
-            lastError = error?.message || String(error);
-            progresses[track.id] = 100; // Mark failed track as 'complete' for avg calculation purposes
-            const overallProgress = calculateSetProgress(); // Recalculate overall progress
-            reportProgressForQueueItem(overallProgress);
-            // Don't rethrow, let Promise.all complete
-          })
-        );
-      }
+          const trackNumber = index + 1;
+          const reportTrackInSetProgress = (progress?: number, browserDownloadId?: number) => {
+            tracksProcessed = Math.max(tracksProcessed, index + (progress !== undefined && progress >= 101 ? 1 : 0));
+            const overallProgress = calculateSetProgress();
+            item.progress = overallProgress;
+            if (item.tabId) {
+              // Send individual track progress too if needed, or just overall set progress
+              sendDownloadProgress(item.tabId, item.id, overallProgress, undefined, browserDownloadId ? undefined : "Resuming", browserDownloadId);
+            }
+            // Optional: Broadcast finer-grained progress for the set
+            // if (progress !== undefined) broadcastQueueUpdate(); 
+          };
 
-      logger.logInfo(`[Queue Set ${item.id}] Waiting for ${downloadPromises.length} track downloads to complete...`);
+          logger.logInfo(`[Queue Set ${item.id}] Starting download for track ${trackNumber}/${allFullTracks.length}: ${trackToDownload.title}`);
+
+          // MODIFIED: Call downloadTrack and expect an object
+          const trackDownloadResult = await downloadTrack(
+            trackToDownload,
+            trackNumber,
+            set.title, // albumName
+            set.title, // playlistNameString
+            reportTrackInSetProgress
+          );
+
+          // ADDED: Add to M3U list
+          if (trackDownloadResult && trackDownloadResult.finalFilenameForM3U) {
+            const durationInSeconds = trackToDownload.duration ? Math.round(trackToDownload.duration / 1000) : 0;
+            const artist = trackToDownload.user?.username || "Unknown Artist";
+            const title = trackToDownload.title || "Unknown Track";
+            const extInfLine = `#EXTINF:${durationInSeconds},${artist} - ${title}`;
+            m3uTrackEntries.push(extInfLine);
+            // --- ADDED DETAILED LOG FOR M3U FILENAME --- 
+            logger.logInfo(`[M3U Set ${item.id}] Pushing to M3U file path entry: '${trackDownloadResult.finalFilenameForM3U}' (Original title for EXTINF: '${artist} - ${title}')`);
+            // --- END ADDED LOG ---
+            m3uTrackEntries.push(trackDownloadResult.finalFilenameForM3U);
+            logger.logDebug(`[M3U Set ${item.id}] Added to M3U: ${trackDownloadResult.finalFilenameForM3U}`);
+          }
+
+          logger.logInfo(`[Queue Set ${item.id}] Completed download for track ${trackNumber}/${allFullTracks.length}: ${trackToDownload.title}`);
+
+        } catch (err: any) {
+          encounteredError = true;
+          lastError = err.message || "Unknown error downloading a track in the set.";
+          logger.logError(`[Queue Set ${item.id}] Error downloading track ${trackToDownload.title}:`, err);
+          if (getConfigValue("stopSetDownloadOnError")) {
+            item.status = "error"; // Mark the whole set as error
+            item.error = `Failed on track: ${trackToDownload.title}. ${lastError}`;
+            // No need to await saveQueueState here, will be saved after loop
+          }
+          // report progress for this track as an error if desired
+          // reportTrackInSetProgress(undefined, undefined); // Or some error code
+        } finally {
+          downloadSemaphore.release();
+          // Update overall progress after each track, regardless of success/failure
+          item.progress = calculateSetProgress();
+          broadcastQueueUpdate(); // Broadcast after each track finishes or errors
+        }
+      });
+
       await Promise.all(downloadPromises);
-      logger.logInfo(`[Queue Set ${item.id}] All track download attempts finished.`);
+      logger.logInfo(`[Queue Set ${item.id}] All track download promises resolved/rejected. Attempting to save queue state next.`); // ADDED LOG
+      await saveQueueState(); // <<< ADDED SAVE (After all tracks in set attempted)
+      logger.logInfo(`[Queue Set ${item.id}] Queue state saved after processing all tracks. EncounteredError: ${encounteredError}`); // ADDED LOG
 
       if (encounteredError) {
-        item.status = "error";
-        item.error = "One or more tracks failed to download within the set.";
-        await saveQueueState(); // <<< ADDED SAVE (Task errored)
+        item.status = "error"; // Ensure status is error if any track failed
+        item.error = item.error || `One or more tracks failed to download within the set. Last error: ${lastError || "None recorded"}`; // Preserve earlier error message if stopSetDownloadOnError was true
+        await saveQueueState();
         logger.logWarn(`[Queue Set ${item.id}] DOWNLOAD_SET completed with errors. Last individual error logged was: ${lastError || "None recorded"}`);
-        if (item.tabId) sendDownloadProgress(item.tabId, item.id, 102, item.error);
+        if (item.tabId) sendDownloadProgress(item.tabId, item.id, item.progress, item.error); // Send final progress/error
       } else {
         item.status = "completed";
         item.progress = 101; // Explicitly set 101
-        await saveQueueState(); // <<< ADDED SAVE (Task completed)
+        await saveQueueState();
         logger.logInfo(`[Queue Set ${item.id}] DOWNLOAD_SET completed successfully.`);
         if (item.tabId) sendDownloadProgress(item.tabId, item.id, 101);
+
+        // ADDED: M3U Generation and Saving
+        logger.logDebug(
+          `[M3U Set ${item.id}] Checking M3U conditions: entries=${m3uTrackEntries.length}, createM3uConfig=${getConfigValue("createM3uPlaylistFile")}`
+        ); // ADDED LOG
+        if (m3uTrackEntries.length > 0 && getConfigValue("createM3uPlaylistFile")) { // Added config check
+          logger.logInfo(`[M3U Set ${item.id}] Generating M3U file for set: ${set.title}`);
+          const m3uContent = "#EXTM3U\n" + m3uTrackEntries.join("\n");
+          const m3uFilename = sanitizeFilenameForDownload(set.title) + ".m3u";
+
+          const defaultDownloadLocation = getConfigValue("default-download-location") as string | undefined;
+          let m3uSavePath = m3uFilename; // Default to just filename (for browser's default download location)
+
+          if (defaultDownloadLocation) {
+            const playlistFolderName = sanitizeFilenameForDownload(set.title);
+            // Assuming tracks were saved in a subfolder named after the playlist,
+            // the M3U should also go there.
+            // The track paths in m3uTrackEntries are already relative to this folder.
+            m3uSavePath = `${defaultDownloadLocation.replace(/\/$/, "")}/${playlistFolderName}/${m3uFilename}`;
+            logger.logDebug(`[M3U Set ${item.id}] M3U save path with location & playlist folder: ${m3uSavePath}`);
+          } else {
+            logger.logInfo(`[M3U Set ${item.id}] No default download location. M3U will be saved to browser default with name: ${m3uFilename}. Relative paths might not work as expected.`);
+          }
+
+          try {
+            const saveAsM3u = !getConfigValue("download-without-prompt"); // Respect user's choice for "save as" dialog
+            logger.logInfo(`[M3U Set ${item.id}] Saving M3U file: ${m3uSavePath}. SaveAs dialog: ${saveAsM3u}`);
+            await saveTextFileAsDownload(m3uContent, m3uSavePath, saveAsM3u, "audio/x-mpegurl");
+            logger.logInfo(`[M3U Set ${item.id}] Successfully initiated M3U file download for: ${set.title}`);
+          } catch (m3uError) {
+            logger.logError(`[M3U Set ${item.id}] Failed to save M3U file for set ${set.title}:`, m3uError);
+            // Do not mark the whole set as failed just because M3U saving failed.
+          }
+        } else if (getConfigValue("createM3uPlaylistFile")) {
+          logger.logWarn(`[M3U Set ${item.id}] No track entries collected for M3U, or M3U creation disabled. Skipping M3U for set: ${set.title}`);
+        }
       }
 
     } else if (item.type === "DOWNLOAD_SET_RANGE") {
@@ -409,6 +497,10 @@ registerConfigChangeHandler("maxConcurrentTrackDownloads", (newValue) => {
 
 // --- End Global Initializations ---
 
+// --- PROGRESS SENDING STATE CACHE ---
+const finishingMessageSentCache: Record<string, boolean> = {};
+// --- END PROGRESS SENDING STATE CACHE ---
+
 /**
  * Updates the declarativeNetRequest rule for adding the OAuth token header.
  * If oauthToken is null or undefined, the rule is removed.
@@ -494,10 +586,15 @@ export function sendDownloadProgress(tabId: number, downloadId: string, progress
 
   if (progress === 101 || progress === 102) {
     logger.logInfo(`Sending COMPLETION message for download ${downloadId} to tab ${tabId}, progress=${progress}`);
+    delete finishingMessageSentCache[downloadId]; // Clear cache on completion/error
   } else if (progress === 100) {
-    logger.logInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
+    if (!finishingMessageSentCache[downloadId]) {
+      logger.logInfo(`Sending FINISHING message for download ${downloadId} to tab ${tabId}`);
+      finishingMessageSentCache[downloadId] = true;
+    }
   } else if (progress !== undefined && progress >= 0) {
     // logger.logDebug(`Sending progress update for download ${downloadId} to tab ${tabId}, progress=${progress.toFixed(1)}%`);
+    delete finishingMessageSentCache[downloadId]; // Clear cache if progress drops below 100
   }
 
   const downloadProgressMessage: DownloadProgress = {

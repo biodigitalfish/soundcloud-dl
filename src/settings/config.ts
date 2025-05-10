@@ -43,6 +43,9 @@ export interface Config {
   "ffmpeg-remux-hls-mp4": ConfigValue<boolean>;
   "debugLoggingEnabled": ConfigValue<boolean>;
   "maxConcurrentTrackDownloads": ConfigValue<number>;
+  "createM3uPlaylistFile": ConfigValue<boolean>;
+  "concurrentSetDownloads": ConfigValue<boolean>;
+  "stopSetDownloadOnError": ConfigValue<boolean>;
 }
 
 type OnConfigValueChangedType = (key: keyof Config, value: any) => void;
@@ -75,6 +78,9 @@ const config: Config = {
   "ffmpeg-remux-hls-mp4": { sync: true, defaultValue: true },
   "debugLoggingEnabled": { defaultValue: false },
   "maxConcurrentTrackDownloads": { sync: true, defaultValue: 3, sanitize: (value) => Math.max(1, Math.min(value, 10)) },
+  "createM3uPlaylistFile": { sync: true, defaultValue: true },
+  "concurrentSetDownloads": { sync: true, defaultValue: true },
+  "stopSetDownloadOnError": { sync: true, defaultValue: false },
 };
 
 export const configKeys = Object.keys(config) as Array<keyof Config>;

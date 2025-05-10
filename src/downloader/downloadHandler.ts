@@ -87,7 +87,7 @@ export async function downloadTrack(
     albumName: string | undefined,
     playlistNameString: string | undefined,
     reportProgress: (progress?: number, browserDownloadId?: number) => void
-): Promise<number> {
+): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; }> {
     if (!isValidTrack(track)) { // Uses local helper
         logger.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
         // Use the TrackError defined in this module
@@ -173,16 +173,16 @@ export async function downloadTrack(
             };
 
             logger.logDebug(`[DownloadHandler TrackId: ${track.id}] Calling handleDownload with data`, { downloadData });
-            // Calls handleDownload from the same module and gets the browser's downloadId
+            // Calls handleDownload from the same module and gets the browser's downloadId and filename
             // The reportProgress callback passed to handleDownload will handle progress from 0 up to just before file saving.
-            const browserDownloadIdFromHandler = await handleDownload(downloadData, reportProgress);
+            const downloadResult = await handleDownload(downloadData, reportProgress);
 
-            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${browserDownloadIdFromHandler} for stream: ${finalStreamUrl}`);
+            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${downloadResult.browserDownloadId} for stream: ${finalStreamUrl} and filename: ${downloadResult.finalFilenameForM3U}`);
 
             // downloadTrack now takes responsibility for the final 101 signal WITH the browser ID.
             // This ensures that the browserDownloadId is available when 101 is reported.
-            reportProgress(101, browserDownloadIdFromHandler);
-            return browserDownloadIdFromHandler; // Return the browser's downloadId up the chain
+            reportProgress(101, downloadResult.browserDownloadId);
+            return downloadResult;
 
         } catch (error) {
             logger.logWarn(
@@ -199,7 +199,7 @@ export async function downloadTrack(
     throw new TrackError("No version of this track could be downloaded", track.id);
 }
 
-export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<number> {
+export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; }> {
     // --- DEBUG START: Moved to very beginning ---
     logger.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
     // --- DEBUG END ---
@@ -292,7 +292,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
                     logger.logInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
-                    return fakeDownloadId;
+                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
                 }
 
                 const specificFilename = `${pathPrefix}${rawFilenameBase}.${data.fileExtension || "mp3"}`;
@@ -336,7 +336,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
                     logger.logInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
-                    return fakeDownloadId;
+                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
                 } else {
                     logger.logDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
                 }
@@ -621,7 +621,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             // REMOVED: reportProgress(101); 
             // The function now returns the browser's download ID.
             // The caller (downloadTrack) will be responsible for the final 101 progress report.
-            return browserDownloadId;
+            return { browserDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
         } catch (saveError) {
             logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
             throw new TrackError(`Save failed for track ${data.trackId}: ${(saveError as Error).message}`, data.trackId);
@@ -640,4 +640,41 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             throw new TrackError(`Unknown error during download: ${error?.message || error}`, data.trackId);
         }
     }
-} 
+}
+
+// --- NEW FUNCTION TO SAVE TEXT FILES (LIKE M3U) ---
+export async function saveTextFileAsDownload(
+    textContent: string,
+    filename: string,
+    saveAs: boolean,
+    mimeType: string = "audio/x-mpegurl" // Default to M3U mime type
+): Promise<number> {
+    logger.logInfo(`[SaveTextFile] Attempting to save text content as filename: '${filename}'. SaveAs: ${saveAs}`);
+    try {
+        const blob = new Blob([textContent], { type: mimeType + ";charset=utf-8" }); // EXPLICITLY ADD UTF-8
+        logger.logDebug(`[SaveTextFile] Created Blob with size: ${blob.size} and type: ${blob.type}`);
+
+        const urlToDownload = await createURLFromBlob(blob);
+        if (!urlToDownload) {
+            throw new Error("Failed to create URL from blob for text file download.");
+        }
+        logger.logDebug(`[SaveTextFile] Created object URL: ${urlToDownload ? urlToDownload.substring(0, 100) + "..." : "undefined"}`);
+
+        const browserDownloadId = await downloadToFile(urlToDownload, filename, saveAs);
+        logger.logInfo(`[SaveTextFile] Successfully initiated browser download for '${filename}' with browserDownloadId: ${browserDownloadId}`);
+
+        // Data URLs (like those from createURLFromBlob typically) don't need manual revocation with URL.revokeObjectURL.
+        // The browser handles their lifecycle. If `createURLFromBlob` were to use `URL.createObjectURL` for non-service worker contexts,
+        // then `revokeURL(urlToDownload)` would be necessary here, but current `createURLFromBlob` uses `FileReader.readAsDataURL`.
+
+        return browserDownloadId;
+    } catch (error) {
+        logger.logError(`[SaveTextFile] Error during text file download for '${filename}':`, error);
+        // Consider re-throwing or handling more gracefully depending on desired behavior
+        if (error instanceof Error) {
+            throw new Error(`SaveTextFile failed for '${filename}': ${error.message}`);
+        }
+        throw new Error(`SaveTextFile failed for '${filename}' with an unknown error.`);
+    }
+}
+// --- END NEW FUNCTION --- 

@@ -944,9 +944,9 @@ const addDownloadButtonToTrackPage = () => {
   // A track page should not be a search page, a sets page, or an albums page.
   // It typically has two main segments: /username/track-slug.
   const isLikelyTrackPage = !currentPath.startsWith("/search/") &&
-                           !currentPath.includes("/sets/") &&
-                           !currentPath.includes("/albums/") &&
-                           pathSegments.length === 2;
+    !currentPath.includes("/sets/") &&
+    !currentPath.includes("/albums/") &&
+    pathSegments.length === 2;
 
   if (!isLikelyTrackPage) {
     logger.logDebug("[TrackPage] Path '" + currentPath + "' does not appear to be an individual track page. Skipping button addition for this handler.");
@@ -1079,32 +1079,32 @@ const handlePageLoaded = async () => {
     logger.logInfo("[handlePageLoaded] DomObserver started/restarted for path: " + window.location.pathname);
     pageInitializationScheduled = false;
     hasInitializedOnce = true; // Mark that at least one initialization has completed
-  }, 250); // Small debounce delay - Increased from 50ms
+  }, 350); // Small debounce delay - Increased from 50ms
 };
 
 const initPageAndPolling = () => {
-    currentPathnameForPolling = window.location.pathname;
-    logger.logInfo("[Framework] Initial pathname set for polling: " + currentPathnameForPolling);
-    handlePageLoaded(); // Initial call
+  currentPathnameForPolling = window.location.pathname;
+  logger.logInfo("[Framework] Initial pathname set for polling: " + currentPathnameForPolling);
+  handlePageLoaded(); // Initial call
 
-    setInterval(() => {
-        if (window.location.pathname !== currentPathnameForPolling) {
-            logger.logInfo("[Framework] URL pathname changed from '" + currentPathnameForPolling + "' to '" + window.location.pathname + "'. Re-initializing buttons.");
-            currentPathnameForPolling = window.location.pathname;
-            // No need to stop observer here, handlePageLoaded will do it.
-            handlePageLoaded(); // Re-initialize
-        }
-    }, 750); // Check every 750ms
+  setInterval(() => {
+    if (window.location.pathname !== currentPathnameForPolling) {
+      logger.logInfo("[Framework] URL pathname changed from '" + currentPathnameForPolling + "' to '" + window.location.pathname + "'. Re-initializing buttons.");
+      currentPathnameForPolling = window.location.pathname;
+      // No need to stop observer here, handlePageLoaded will do it.
+      handlePageLoaded(); // Re-initialize
+    }
+  }, 750); // Check every 750ms
 };
 
 let initialSetupDone = false;
 const guardedInitPageAndPolling = () => {
-    if (!initialSetupDone) {
-        initialSetupDone = true;
-        initPageAndPolling();
-    } else {
-        logger.logDebug("[Framework] guardedInitPageAndPolling: Initial setup already done. Skipping redundant call.");
-    }
+  if (!initialSetupDone) {
+    initialSetupDone = true;
+    initPageAndPolling();
+  } else {
+    logger.logDebug("[Framework] guardedInitPageAndPolling: Initial setup already done. Skipping redundant call.");
+  }
 };
 
 // Original startup logic:
@@ -1131,12 +1131,12 @@ const addDownloadButtonToPlaylistPage = () => {
   }
 
   const isAnyPlaylistPage = currentPath.includes("/sets/") ||
-                            currentPath.includes("/albums/") ||
-                            currentPath.includes("/discover/sets/your-moods:") ||
-                            document.querySelector(".setTrackList") !== null || // Common for sets
-                            document.querySelector(".trackList") !== null ||   // Common for user playlists/likes etc.
-                            document.querySelector(".systemPlaylistTrackList__list") !== null || // Added for system playlists like auto-mix
-                            document.querySelector(".mixedSelection") !== null; // Auto-mix pages
+    currentPath.includes("/albums/") ||
+    currentPath.includes("/discover/sets/your-moods:") ||
+    document.querySelector(".setTrackList") !== null || // Common for sets
+    document.querySelector(".trackList") !== null ||   // Common for user playlists/likes etc.
+    document.querySelector(".systemPlaylistTrackList__list") !== null || // Added for system playlists like auto-mix
+    document.querySelector(".mixedSelection") !== null; // Auto-mix pages
 
   if (!isAnyPlaylistPage) {
     logger.logDebug("[PlaylistPage] Not a recognized playlist/set page, skipping.");
@@ -1196,43 +1196,43 @@ const addDownloadButtonToPlaylistPage = () => {
         // We create our own wrapper div to be a sibling to other button wrappers.
         let scdlWrapper = container.querySelector("." + strategy.wrapperClass.replace(/ /g, ".")) as HTMLElement;
         if (scdlWrapper && scdlWrapper.closest(strategy.selector) === container) {
-            // Wrapper already exists and is a direct child of this container, reuse it.
-             logger.logDebug("[PlaylistPage] Reusing existing SCDL wrapper: " + strategy.wrapperClass);
+          // Wrapper already exists and is a direct child of this container, reuse it.
+          logger.logDebug("[PlaylistPage] Reusing existing SCDL wrapper: " + strategy.wrapperClass);
         } else {
-            scdlWrapper = document.createElement("div");
-            scdlWrapper.className = strategy.wrapperClass;
+          scdlWrapper = document.createElement("div");
+          scdlWrapper.className = strategy.wrapperClass;
 
-            const scdlUniqueClass = "scdl-button-placement-wrapper"; // Class that makes our wrapper unique
-            const generalButtonClass = "systemPlaylistDetails__button"; // Class SC uses for its button wrappers
+          const scdlUniqueClass = "scdl-button-placement-wrapper"; // Class that makes our wrapper unique
+          const generalButtonClass = "systemPlaylistDetails__button"; // Class SC uses for its button wrappers
 
-            // Find all *native* button wrappers: direct children of the container,
-            // having the general button class but NOT our unique class.
-            const nativeButtonElements = Array.from(
-                container.querySelectorAll(":scope > ." + generalButtonClass + ":not(." + scdlUniqueClass + ")")
-            ) as HTMLElement[];
+          // Find all *native* button wrappers: direct children of the container,
+          // having the general button class but NOT our unique class.
+          const nativeButtonElements = Array.from(
+            container.querySelectorAll(":scope > ." + generalButtonClass + ":not(." + scdlUniqueClass + ")")
+          ) as HTMLElement[];
 
-            if (nativeButtonElements.length > 0) {
-                // If native buttons exist, insert our wrapper after the LAST native button.
-                const lastNativeButton = nativeButtonElements[nativeButtonElements.length - 1];
-                if (lastNativeButton.nextSibling) {
-                    container.insertBefore(scdlWrapper, lastNativeButton.nextSibling);
-                } else {
-                    container.appendChild(scdlWrapper); // lastNativeButton was already the last child
-                }
-                logger.logInfo("[PlaylistPage] Inserted SCDL wrapper after last native button in: " + strategy.selector);
+          if (nativeButtonElements.length > 0) {
+            // If native buttons exist, insert our wrapper after the LAST native button.
+            const lastNativeButton = nativeButtonElements[nativeButtonElements.length - 1];
+            if (lastNativeButton.nextSibling) {
+              container.insertBefore(scdlWrapper, lastNativeButton.nextSibling);
             } else {
-                // No native buttons found.
-                // Try to insert before a known non-button element like '.systemPlaylistDetails__description',
-                // or just append if that's not found either.
-                const knownNonButtonSeparator = container.querySelector(":scope > .systemPlaylistDetails__description") as HTMLElement;
-                if (knownNonButtonSeparator) {
-                    container.insertBefore(scdlWrapper, knownNonButtonSeparator);
-                    logger.logInfo("[PlaylistPage] Inserted SCDL wrapper before description (no native buttons) in: " + strategy.selector);
-                } else {
-                    container.appendChild(scdlWrapper); // Fallback: append
-                    logger.logInfo("[PlaylistPage] Appended SCDL wrapper (no native buttons or description) in: " + strategy.selector);
-                }
+              container.appendChild(scdlWrapper); // lastNativeButton was already the last child
             }
+            logger.logInfo("[PlaylistPage] Inserted SCDL wrapper after last native button in: " + strategy.selector);
+          } else {
+            // No native buttons found.
+            // Try to insert before a known non-button element like '.systemPlaylistDetails__description',
+            // or just append if that's not found either.
+            const knownNonButtonSeparator = container.querySelector(":scope > .systemPlaylistDetails__description") as HTMLElement;
+            if (knownNonButtonSeparator) {
+              container.insertBefore(scdlWrapper, knownNonButtonSeparator);
+              logger.logInfo("[PlaylistPage] Inserted SCDL wrapper before description (no native buttons) in: " + strategy.selector);
+            } else {
+              container.appendChild(scdlWrapper); // Fallback: append
+              logger.logInfo("[PlaylistPage] Appended SCDL wrapper (no native buttons or description) in: " + strategy.selector);
+            }
+          }
         }
         finalButtonParent = scdlWrapper;
       } else if (strategy.groupClass) {
@@ -1241,16 +1241,16 @@ const addDownloadButtonToPlaylistPage = () => {
         let buttonGroup = container.querySelector(groupClassSelector + ":not(.scdl-generated-group)") as HTMLElement; // Prefer non-generated first
 
         if (!buttonGroup) { // If no existing non-generated group, try to find our generated one
-            buttonGroup = container.querySelector(groupClassSelector + ".scdl-generated-group") as HTMLElement;
+          buttonGroup = container.querySelector(groupClassSelector + ".scdl-generated-group") as HTMLElement;
         }
-        
+
         if (buttonGroup && buttonGroup.closest(strategy.selector) === container) { // Group exists and is a child of this container
-             logger.logDebug("[PlaylistPage] Using existing button group in '" + strategy.selector + "'.");
+          logger.logDebug("[PlaylistPage] Using existing button group in '" + strategy.selector + "'.");
         } else { // Create the group
-            buttonGroup = document.createElement("div");
-            buttonGroup.className = strategy.groupClass + " scdl-generated-group";
-            container.appendChild(buttonGroup);
-            logger.logInfo("[PlaylistPage] Created new '" + strategy.groupClass + "' in '" + strategy.selector + "'.");
+          buttonGroup = document.createElement("div");
+          buttonGroup.className = strategy.groupClass + " scdl-generated-group";
+          container.appendChild(buttonGroup);
+          logger.logInfo("[PlaylistPage] Created new '" + strategy.groupClass + "' in '" + strategy.selector + "'.");
         }
         finalButtonParent = buttonGroup;
       }
@@ -1270,7 +1270,7 @@ const addDownloadButtonToPlaylistPage = () => {
     const command = createDownloadCommand(downloadUrl);
     // For playlist pages, we always want the range option, so explicitly set isSet.
     // createDownloadCommand might infer this, but being explicit is safer for this page type.
-    (command as any).isSet = true; 
+    (command as any).isSet = true;
     logger.logInfo("[PlaylistPage] Adding download buttons to determined final parent:", finalButtonParent);
     addDownloadButtonToParent(finalButtonParent, command, false);
   } else {
@@ -1298,8 +1298,8 @@ const addDownloadButtonsToSearchPagePlaylists = () => {
     // Let's try to be robust: look for .soundActions first, then .sc-button-group inside it.
     // Or it could be directly in sound__footer > .soundActions
     let buttonParentCandidate = playlistItemElement.querySelector(".soundFooter .soundActions .sc-button-group") ||
-                                playlistItemElement.querySelector(".sound__footer .soundActions .sc-button-group") || // From user provided HTML structure (playlist on search page)
-                                playlistItemElement.querySelector(".soundActions .sc-button-group"); // More general
+      playlistItemElement.querySelector(".sound__footer .soundActions .sc-button-group") || // From user provided HTML structure (playlist on search page)
+      playlistItemElement.querySelector(".soundActions .sc-button-group"); // More general
 
     if (!titleLink || !titleLink.getAttribute("href")) {
       logger.logWarn("[SearchPagePlaylists] Could not find title link or valid href for item:", playlistItemElement);
@@ -1308,31 +1308,31 @@ const addDownloadButtonsToSearchPagePlaylists = () => {
     if (!buttonParentCandidate) {
       // Fallback: try to find a more generic .soundActions container if specific group not found
       buttonParentCandidate = playlistItemElement.querySelector(".soundFooter .soundActions") ||
-                              playlistItemElement.querySelector(".sound__footer .soundActions") ||
-                              playlistItemElement.querySelector(".soundActions");
-      if(!buttonParentCandidate) {
+        playlistItemElement.querySelector(".sound__footer .soundActions") ||
+        playlistItemElement.querySelector(".soundActions");
+      if (!buttonParentCandidate) {
         logger.logWarn("[SearchPagePlaylists] Could not find a suitable button parent (.soundActions or .sc-button-group) for item:", playlistItemElement);
         return;
       }
     }
-    
+
     // Ensure we don't add buttons repeatedly if the observer re-triggers or selectors overlap
     if (buttonParentCandidate.querySelector("button.sc-button-download")) {
-        logger.logDebug("[SearchPagePlaylists] Download button already exists for this item.", playlistItemElement);
-        return;
+      logger.logDebug("[SearchPagePlaylists] Download button already exists for this item.", playlistItemElement);
+      return;
     }
 
     let playlistHref = titleLink.getAttribute("href");
     if (!playlistHref) { // Should be caught by earlier check, but good for safety
-        logger.logError("[SearchPagePlaylists] Playlist href is null after initial check for item:", playlistItemElement);
-        return;
+      logger.logError("[SearchPagePlaylists] Playlist href is null after initial check for item:", playlistItemElement);
+      return;
     }
-    
+
     let playlistUrl = playlistHref;
     if (!playlistUrl.startsWith("http")) { // Ensure it's a full URL
-        playlistUrl = window.location.origin + playlistUrl;
+      playlistUrl = window.location.origin + playlistUrl;
     }
-    
+
     logger.logInfo(`[SearchPagePlaylists] Adding button for playlist URL: ${playlistUrl}`);
     const downloadCommand = createDownloadCommand(playlistUrl);
     // createDownloadCommand should correctly identify it as a set if URL contains /sets/
@@ -1607,25 +1607,25 @@ function startDebugLogging() {
 // Call to start the debug logger when page is loaded
 // Adjusted to use the guarded approach for initialization
 const guardedStartDebugLogging = () => {
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-        setTimeout(startDebugLogging, 2000); // Start after other initialization
-    } else {
-        document.addEventListener("DOMContentLoaded", () => {
-            setTimeout(startDebugLogging, 2000);
-        });
-    }
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    setTimeout(startDebugLogging, 2000); // Start after other initialization
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      setTimeout(startDebugLogging, 2000);
+    });
+  }
 };
 guardedStartDebugLogging();
 
 // Call to start the checker when page is loaded
 // Adjusted to use the guarded approach for initialization
 const guardedInitializeDownloadCheckers = () => {
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-        setTimeout(initializeDownloadCheckers, 1000); // Start slightly after main initialization
-    } else {
-        document.addEventListener("DOMContentLoaded", () => {
-            setTimeout(initializeDownloadCheckers, 1000);
-        });
-    }
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    setTimeout(initializeDownloadCheckers, 1000); // Start slightly after main initialization
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      setTimeout(initializeDownloadCheckers, 1000);
+    });
+  }
 };
 guardedInitializeDownloadCheckers();

@@ -3,9 +3,9 @@ import { Logger, LogLevel } from "../utils/logger"; // Assuming logger is in uti
 const logger = Logger.create("Semaphore", LogLevel.Debug);
 
 export class Semaphore {
-    private tasks: (() => void)[] = [];
     private count: number;
     private readonly maxCount: number;
+    private waiting: Array<() => void> = [];
 
     constructor(count: number) {
         if (count <= 0) {
@@ -15,34 +15,38 @@ export class Semaphore {
         this.maxCount = count;
     }
 
-    private async acquire(): Promise<void> {
-        logger.logDebug(`Acquire attempt: current count ${this.count}, tasks in queue ${this.tasks.length}`);
+    public async acquire(): Promise<void> {
+        logger.logDebug(`Acquire attempt: current count ${this.count}, waiting queue ${this.waiting.length}`);
         if (this.count > 0) {
             this.count--;
             logger.logDebug(`Acquired immediately. New count ${this.count}`);
             return Promise.resolve();
         }
-        // Wait for a slot to be released
+        // If no permits are available, wait
         return new Promise<void>((resolve) => {
-            this.tasks.push(resolve);
-            logger.logDebug(`Queued. New queue length ${this.tasks.length}`);
+            this.waiting.push(resolve);
+            logger.logDebug(`Queued. New queue length ${this.waiting.length}`);
         });
     }
 
-    private release(): void {
-        this.count++;
-        logger.logDebug(`Released. New count ${this.count}`);
-        if (this.tasks.length > 0) {
-            const nextTaskResolve = this.tasks.shift();
-            if (nextTaskResolve) {
-                this.count--; // Re-acquire for the new task that is about to be resolved
-                logger.logDebug(`Processing queued task. New count ${this.count}, New queue length ${this.tasks.length}`);
-                nextTaskResolve();
+    public release(): void {
+        if (this.waiting.length > 0) {
+            const nextResolve = this.waiting.shift();
+            if (nextResolve) {
+                logger.logDebug(`Releasing permit to a waiting task. Queue length now ${this.waiting.length}`);
+                nextResolve();
+            } else {
+                this.count++;
+                logger.logWarn("[Semaphore] Shift from waiting queue returned undefined, but queue was not empty. Incrementing count.");
             }
+        } else {
+            this.count++;
+            logger.logDebug(`Permit released to pool. New count ${this.count}`);
         }
+
         if (this.count > this.maxCount) {
-            logger.logWarn(`Semaphore count (${this.count}) exceeded maxCount (${this.maxCount}) after release. This might indicate an issue.`);
-            this.count = this.maxCount; // Correct it
+            logger.logWarn(`Semaphore count (${this.count}) exceeded maxCount (${this.maxCount}) after release. Correcting.`);
+            this.count = this.maxCount;
         }
     }
 
@@ -60,6 +64,6 @@ export class Semaphore {
     }
 
     public getQueueLength(): number {
-        return this.tasks.length;
+        return this.waiting.length;
     }
 } 
