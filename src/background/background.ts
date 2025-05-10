@@ -319,12 +319,11 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
           // ADDED: Add to M3U list
           if (trackDownloadResult && trackDownloadResult.finalFilenameForM3U) {
             const durationInSeconds = trackToDownload.duration ? Math.round(trackToDownload.duration / 1000) : 0;
-            const artist = trackToDownload.user?.username || "Unknown Artist";
-            const title = trackToDownload.title || "Unknown Track";
-            const extInfLine = `#EXTINF:${durationInSeconds},${artist} - ${title}`;
+            // MODIFIED: Use extInfDisplayTitle from trackDownloadResult for the #EXTINF line
+            const extInfLine = `#EXTINF:${durationInSeconds},${trackDownloadResult.extInfDisplayTitle}`;
             m3uTrackEntries.push(extInfLine);
             // --- ADDED DETAILED LOG FOR M3U FILENAME --- 
-            logger.logInfo(`[M3U Set ${item.id}] Pushing to M3U file path entry: '${trackDownloadResult.finalFilenameForM3U}' (Original title for EXTINF: '${artist} - ${title}')`);
+            logger.logInfo(`[M3U Set ${item.id}] Pushing to M3U file path entry: '${trackDownloadResult.finalFilenameForM3U}' (Original title for EXTINF: '${trackDownloadResult.extInfDisplayTitle}')`);
             // --- END ADDED LOG ---
             m3uTrackEntries.push(trackDownloadResult.finalFilenameForM3U);
             logger.logDebug(`[M3U Set ${item.id}] Added to M3U: ${trackDownloadResult.finalFilenameForM3U}`);
@@ -375,7 +374,8 @@ const _executeDownloadTask = async (item: QueueItem): Promise<void> => {
         ); // ADDED LOG
         if (m3uTrackEntries.length > 0 && getConfigValue("createM3uPlaylistFile")) { // Added config check
           logger.logInfo(`[M3U Set ${item.id}] Generating M3U file for set: ${set.title}`);
-          const m3uContent = "#EXTM3U\n" + m3uTrackEntries.join("\n");
+          // MODIFIED: Use CRLF line endings for M3U content
+          const m3uContent = "#EXTM3U\r\n" + m3uTrackEntries.join("\r\n");
           const m3uFilename = sanitizeFilenameForDownload(set.title) + ".m3u";
 
           const defaultDownloadLocation = getConfigValue("default-download-location") as string | undefined;

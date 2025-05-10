@@ -87,7 +87,7 @@ export async function downloadTrack(
     albumName: string | undefined,
     playlistNameString: string | undefined,
     reportProgress: (progress?: number, browserDownloadId?: number) => void
-): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; }> {
+): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; extInfDisplayTitle: string; }> {
     if (!isValidTrack(track)) { // Uses local helper
         logger.logError("[DownloadHandler] Track does not satisfy constraints needed to be downloadable", track);
         // Use the TrackError defined in this module
@@ -177,16 +177,18 @@ export async function downloadTrack(
             // The reportProgress callback passed to handleDownload will handle progress from 0 up to just before file saving.
             const downloadResult = await handleDownload(downloadData, reportProgress);
 
-            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${downloadResult.browserDownloadId} for stream: ${finalStreamUrl} and filename: ${downloadResult.finalFilenameForM3U}`);
+            logger.logInfo(`[DownloadHandler TrackId: ${track.id}] handleDownload returned browserDownloadId: ${downloadResult.browserDownloadId} for stream: ${finalStreamUrl} and filename: ${downloadResult.finalFilenameForM3U}. ExtInfTitle: ${downloadResult.extInfDisplayTitle}`);
 
             // downloadTrack now takes responsibility for the final 101 signal WITH the browser ID.
             // This ensures that the browserDownloadId is available when 101 is reported.
             reportProgress(101, downloadResult.browserDownloadId);
             return downloadResult;
 
-        } catch (error) {
+        } catch (error: any) { // Catching 'any' as handleDownload can throw various things
+            // Ensure error is an Error instance before accessing message
+            const errorMessage = error instanceof Error ? error.message : String(error);
             logger.logWarn(
-                `[DownloadHandler TrackId: ${track.id}] Download attempt failed for option. Error: ${error?.message || error}`,
+                `[DownloadHandler TrackId: ${track.id}] Download attempt failed for option. Error: ${errorMessage}`,
                 { downloadDetail, streamUrl: resolvedStreamUrl }
             );
             // Error from handleDownload will be TrackError instance from this file.
@@ -199,7 +201,7 @@ export async function downloadTrack(
     throw new TrackError("No version of this track could be downloaded", track.id);
 }
 
-export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; }> {
+export async function handleDownload(data: DownloadData, reportProgress: (progress?: number, browserDownloadId?: number) => void): Promise<{ browserDownloadId: number; finalFilenameForM3U: string; extInfDisplayTitle: string; }> {
     // --- DEBUG START: Moved to very beginning ---
     logger.logDebug(`[handleDownload ENTRY] Processing TrackId: ${data.trackId}. History check comes later.`);
     // --- DEBUG END ---
@@ -244,7 +246,9 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             rawFilenameBase = sanitizeFilenameForDownload(`${artistsString} - ${titleString}`);
         } catch (error) {
             logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Error during metadata processing:`, error);
-            throw new TrackError(`Metadata processing failed for track ${data.trackId}: ${(error as Error).message}`, data.trackId);
+            // Use local TrackError and ensure error is an Error instance
+            const errMsg = error instanceof Error ? error.message : String(error);
+            throw new TrackError(`Metadata processing failed for track ${data.trackId}: ${errMsg}`, data.trackId);
         }
 
         // Initialize config-dependent hoisted variables here, AFTER rawFilenameBase is set
@@ -292,7 +296,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
                     logger.logInfo(`Using fake download ID ${fakeDownloadId} for skipped track ${data.trackId}`);
-                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
+                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3"), extInfDisplayTitle: `${artistsString} - ${titleString}` };
                 }
 
                 const specificFilename = `${pathPrefix}${rawFilenameBase}.${data.fileExtension || "mp3"}`;
@@ -336,7 +340,7 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
                     // Generate a fake download ID for the UI to use when skipping downloads
                     const fakeDownloadId = Math.floor(Math.random() * 1000000) + 1000;
                     logger.logInfo(`Using fake download ID ${fakeDownloadId} for already downloaded track ${data.trackId}`);
-                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
+                    return { browserDownloadId: fakeDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3"), extInfDisplayTitle: `${artistsString} - ${titleString}` };
                 } else {
                     logger.logDebug(`No matching downloads found for TrackId: ${data.trackId} with filename base "${rawFilenameBase}"`);
                 }
@@ -621,10 +625,12 @@ export async function handleDownload(data: DownloadData, reportProgress: (progre
             // REMOVED: reportProgress(101); 
             // The function now returns the browser's download ID.
             // The caller (downloadTrack) will be responsible for the final 101 progress report.
-            return { browserDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3") };
+            return { browserDownloadId, finalFilenameForM3U: rawFilenameBase + "." + (data.fileExtension || "mp3"), extInfDisplayTitle: `${artistsString} - ${titleString}` };
         } catch (saveError) {
             logger.logError(`[DownloadHandler TrackId: ${data.trackId}] Download save stage error:`, saveError);
-            throw new TrackError(`Save failed for track ${data.trackId}: ${(saveError as Error).message}`, data.trackId);
+            // Use local TrackError and ensure error is an Error instance
+            const errMsg = saveError instanceof Error ? saveError.message : String(saveError);
+            throw new TrackError(`Save failed for track ${data.trackId}: ${errMsg}`, data.trackId);
         }
         // No finally block with URL.revokeObjectURL is needed for data URLs.
         // The variable objectUrlToRevoke could be renamed throughout the function if desired for clarity.
